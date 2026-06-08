@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import confetti from 'canvas-confetti';
 import { useApp } from '../../../context/AppContext';
 import GameCanvas from '../../../components/GameCanvas';
 import { EV } from '../../../lib/constants';
@@ -161,44 +160,10 @@ function EndScreen({ result, stats, eloDelta, reason, winnerLabel, winners = [],
   const labels = { win: 'TU REMPORTES LE DUEL', lose: 'DÉFAITE', draw: 'ÉGALITÉ' };
 
   useEffect(() => {
-    let raf;
-
-    if (result === 'win') {
-      // 🎉 Le gagnant a droit aux confettis
-      const colors = [winnerColor, '#ffffff'];
-      confetti({ particleCount: 140, spread: 100, startVelocity: 45, origin: { y: 0.4 }, colors, scalar: 1.1 });
-      setTimeout(() => confetti({ particleCount: 80, spread: 120, startVelocity: 35, origin: { y: 0.5 }, colors }), 200);
-
-      const end = Date.now() + 1600;
-      const frame = () => {
-        confetti({ particleCount: 4, angle: 60, spread: 55, startVelocity: 40, origin: { x: 0, y: 0.6 }, colors });
-        confetti({ particleCount: 4, angle: 120, spread: 55, startVelocity: 40, origin: { x: 1, y: 0.6 }, colors });
-        if (Date.now() < end) raf = requestAnimationFrame(frame);
-      };
-      frame();
-    } else if (result === 'lose') {
-      // 🍅 Le perdant se prend des tomates + un « bouhhh » de la foule
-      playBoo();
-      const tomato = confetti.shapeFromText({ text: '🍅', scalar: 3 });
-      const splat = ['#c1121f', '#e63946', '#9d0208'];
-      const splatShape = () => confetti({ particleCount: 18, spread: 70, startVelocity: 12, gravity: 1.1, ticks: 60, origin: { y: 0.55 }, colors: splat, shapes: ['circle'], scalar: 0.8 });
-      const throwFrom = (x, angle) => confetti({
-        particleCount: 6, angle, spread: 35, startVelocity: 60, gravity: 1.5, ticks: 110,
-        origin: { x, y: 0.75 }, shapes: [tomato], scalar: 3, flat: false,
-      });
-
-      const end = Date.now() + 1700;
-      const frame = () => {
-        throwFrom(-0.05, 55);
-        throwFrom(1.05, 125);
-        if (Math.random() < 0.4) splatShape();
-        if (Date.now() < end) raf = requestAnimationFrame(frame);
-      };
-      frame();
-    }
-
-    return () => raf && cancelAnimationFrame(raf);
-  }, [result, winnerColor]);
+    // Plus de particules (confettis/tomates) : trop lourdes sur mobile → lag.
+    // On garde uniquement la huée audio pour la défaite (aucun coût visuel).
+    if (result === 'lose') playBoo();
+  }, [result]);
 
   return (
     <div className="end-screen">

@@ -4,9 +4,12 @@ import { useRef, useState, useCallback } from 'react';
 // Rayon de débattement du stick (px) et seuils de conversion vecteur → 4 booléens.
 // On reproduit le 8-directions du clavier : chaque axe s'active au-delà d'un seuil,
 // donc pousser en diagonale engage deux axes (ex. haut + droite).
-const MAX_RADIUS = 58;
+const MAX_RADIUS = 40;
 const DEADZONE = 0.22;     // en deçà : aucun déplacement (zone morte au centre)
 const AXIS_THRESH = 0.38;  // au-delà : l'axe correspondant s'active
+const EDGE_MARGIN = 52;    // garde la base + son halo dans l'écran (pas de débord)
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 const NEUTRAL = { up: false, down: false, left: false, right: false };
 
@@ -45,7 +48,11 @@ export default function TouchControls({ onMove, onShoot, onPing, onFirstTouch, s
     stickPointer.current = e.pointerId;
     zoneRef.current?.setPointerCapture(e.pointerId);
     onFirstTouch?.();
-    setStick({ bx: e.clientX, by: e.clientY, kx: 0, ky: 0 });
+    // La base naît sous le pouce, mais on la décale juste assez pour que le
+    // halo ne déborde pas du bord de l'écran.
+    const bx = clamp(e.clientX, EDGE_MARGIN, window.innerWidth - EDGE_MARGIN);
+    const by = clamp(e.clientY, EDGE_MARGIN, window.innerHeight - EDGE_MARGIN);
+    setStick({ bx, by, kx: 0, ky: 0 });
   };
 
   const onZoneMove = (e) => {

@@ -459,8 +459,8 @@ body::after {
 .tc-stick-ring,
 .tc-stick-ring--2 {
   position: absolute; top: 0; left: 0;
-  width: 132px; height: 132px;
-  margin: -66px 0 0 -66px;
+  width: 92px; height: 92px;
+  margin: -46px 0 0 -46px;
   border-radius: 50%;
   border: 1.5px solid rgba(0, 255, 255, 0.45);
   background:
@@ -468,11 +468,11 @@ body::after {
       rgba(0, 255, 255, 0.10) 0%,
       rgba(0, 255, 255, 0.04) 45%,
       transparent 72%);
-  box-shadow: 0 0 22px rgba(0, 255, 255, 0.22), inset 0 0 26px rgba(0, 255, 255, 0.12);
+  box-shadow: 0 0 18px rgba(0, 255, 255, 0.22), inset 0 0 20px rgba(0, 255, 255, 0.12);
 }
 .tc-stick-ring--2 {
-  width: 168px; height: 168px;
-  margin: -84px 0 0 -84px;
+  width: 116px; height: 116px;
+  margin: -58px 0 0 -58px;
   border-color: rgba(0, 255, 255, 0.18);
   background: none;
   box-shadow: none;
@@ -484,8 +484,8 @@ body::after {
 }
 .tc-stick-cross {
   position: absolute; top: 0; left: 0;
-  width: 132px; height: 132px;
-  margin: -66px 0 0 -66px;
+  width: 92px; height: 92px;
+  margin: -46px 0 0 -46px;
   border-radius: 50%;
   background:
     linear-gradient(rgba(0,255,255,0.16), rgba(0,255,255,0.16)) center / 1px 56% no-repeat,
@@ -493,7 +493,7 @@ body::after {
 }
 .tc-stick-knob {
   position: absolute; top: 0; left: 0;
-  width: 64px; height: 64px;
+  width: 46px; height: 46px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 38% 32%, #d8ffff 0%, var(--cyan) 42%, #0a8a8a 100%);
