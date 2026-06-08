@@ -277,9 +277,10 @@ export class GameRenderer {
 
   // Tir prédit localement : la (ou les, en rafale) balle part immédiatement du
   // bout du canon PRÉDIT (donc aligné sur le vaisseau affiché), sans attendre
-  // l'aller-retour serveur. Purement visuel — les dégâts restent côté serveur.
-  // Le ghost vit ~220ms (fondu en fin de vie), le temps que le projectile
-  // serveur prenne le relais dans le flux interpolé.
+  // l'aller-retour serveur. Elle simule TOUT son trajet côté client ; en
+  // contrepartie on n'affiche PAS le projectile serveur de mes propres tirs
+  // (cf. _drawProjectiles) → une seule balle, pas de doublon. Les dégâts
+  // restent gérés par le serveur.
   predictShot() {
     if (!this._pred) return;
     const me = this._buffer[this._buffer.length - 1]?.state?.players?.[this.myPlayerIndex];
@@ -295,6 +296,18 @@ export class GameRenderer {
     }
   }
 
+  // Mon tir a touché (event PLAYER_HIT à mon nom) : on retire le ghost le plus
+  // proche de l'impact → il « s'éteint » sur la cible comme le ferait la vraie balle.
+  consumeLocalShotAt(x, y) {
+    if (!this._localShots.length) return;
+    let bi = -1, bd = Infinity;
+    for (let i = 0; i < this._localShots.length; i++) {
+      const d = Math.hypot(this._localShots[i].x - x, this._localShots[i].y - y);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    if (bi >= 0 && bd < 60) this._localShots.splice(bi, 1);
+  }
+
   _advanceLocalShots(dtMs) {
     if (!this._localShots.length) return;
     const dt = Math.min(dtMs, 50) / 1000;
@@ -302,7 +315,7 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     this._localShots = this._localShots.filter(s => {
       s.x += s.vx * dt; s.y += s.vy * dt;
-      if (now - s.born > 220) return false;            // relais pris par le serveur
+      if (now - s.born > 6000) return false;           // garde-fou anti-fuite
       if (s.x < 0 || s.x > W || s.y < 0 || s.y > H) return false;
       return !this._shotHitsWall(s.x, s.y);
     });
@@ -318,26 +331,26 @@ export class GameRenderer {
     return x >= x0 && x <= x1 && y >= y0 && y <= y1;
   }
 
+  // Balle prédite : rendue exactement comme un projectile serveur (traînée +
+  // tête lumineuse), pleine opacité — c'est LA balle visible de mes tirs.
   _drawLocalShots(ctx) {
     if (!this._localShots.length) return;
-    const now = performance.now();
     const color = this._teamColor(this.myTeam);
     ctx.save();
     for (const s of this._localShots) {
-      const a = Math.max(0, 1 - (now - s.born) / 220);
       const speed = Math.hypot(s.vx, s.vy);
       if (speed > 0) {
         const tx = s.x - (s.vx / speed) * 18, ty = s.y - (s.vy / speed) * 18;
         const tg = ctx.createLinearGradient(s.x, s.y, tx, ty);
-        tg.addColorStop(0, `rgba(${color},${0.6 * a})`);
+        tg.addColorStop(0, `rgba(${color},0.6)`);
         tg.addColorStop(1, `rgba(${color},0)`);
         ctx.strokeStyle = tg; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tx, ty); ctx.stroke();
       }
       ctx.beginPath();
       ctx.arc(s.x, s.y, PROJECTILE.RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${a})`;
-      ctx.shadowColor = `rgba(${color},${a})`; ctx.shadowBlur = 16;
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = `rgba(${color},1)`; ctx.shadowBlur = 16;
       ctx.fill();
     }
     ctx.restore();
@@ -591,9 +604,10 @@ export class GameRenderer {
     }
 
     if (s.sonarWaves) {
-      // Balayage sonar : anneau de lumière FEUTRÉ (bords intérieur ET extérieur
-      // fondus) plutôt qu'une bande dure. Évite l'anneau brutal sur le voile noir.
-      const tailLen = 110; // longueur visuelle de la traîne (≈ la zone révélée)
+      // Balayage sonar : glow REMPLI (intérieur faiblement éclairé qui fait le
+      // pont avec le halo perso, crête lumineuse au front, bord extérieur fondu).
+      // Évite le « trou noir » entre l'aura et l'onde → une seule lumière qui
+      // s'étend au lieu de deux cercles.
       for (const wave of s.sonarWaves) {
         if (s.players?.[wave.playerIndex]?.team !== this.myTeam) continue; // seulement mon équipe
         const elapsed = now - wave.startTime;
@@ -601,13 +615,11 @@ export class GameRenderer {
         if (front <= 6) continue;
         const life = Math.max(0, 1 - elapsed / SONAR.LIFETIME_MS);
         if (life <= 0) continue;
-        const peak = 0.5 * life;                       // pic plus doux qu'avant
-        const innerR = Math.max(0, front - tailLen);   // début feutré de la traîne
-        const g = mctx.createRadialGradient(wave.x, wave.y, innerR, wave.x, wave.y, front);
-        g.addColorStop(0, 'rgba(255,255,255,0)');
-        g.addColorStop(0.55, `rgba(255,255,255,${peak * 0.4})`);
-        g.addColorStop(0.86, `rgba(255,255,255,${peak})`); // crête juste derrière le front
-        g.addColorStop(1, 'rgba(255,255,255,0)');           // bord extérieur fondu
+        const g = mctx.createRadialGradient(wave.x, wave.y, 0, wave.x, wave.y, front);
+        g.addColorStop(0, `rgba(255,255,255,${0.10 * life})`);   // pont vers l'aura
+        g.addColorStop(0.78, `rgba(255,255,255,${0.16 * life})`);
+        g.addColorStop(0.92, `rgba(255,255,255,${0.5 * life})`); // crête au front
+        g.addColorStop(1, 'rgba(255,255,255,0)');                 // bord fondu
         mctx.fillStyle = g;
         mctx.beginPath(); mctx.arc(wave.x, wave.y, front, 0, Math.PI * 2); mctx.fill();
       }
@@ -667,6 +679,9 @@ export class GameRenderer {
     if (!s.projectiles) return;
     ctx.save();
     s.projectiles.forEach(p => {
+      // Mes propres tirs sont rendus en prédiction locale (ghost) → on n'affiche
+      // pas leur version serveur, sinon on verrait deux balles.
+      if (p.playerIndex === this.myPlayerIndex) return;
       // Le serveur ne nous envoie déjà que les projectiles visibles (interest
       // management) : on dessine tout ce qu'on reçoit.
       const color = this._teamColor(s.players?.[p.playerIndex]?.team);

@@ -177,7 +177,10 @@ export default function GameCanvas({ matchData, initialState }) {
         // Révèle brièvement la cible touchée, même si elle est hors-vue : un
         // marqueur d'impact apparaît à l'endroit du tir réussi (le serveur ne
         // m'envoie x/y que pour mes propres touches).
-        if (x != null && y != null) rendererRef.current?.triggerHitReveal(playerIndex, x, y);
+        if (x != null && y != null) {
+          rendererRef.current?.triggerHitReveal(playerIndex, x, y);
+          rendererRef.current?.consumeLocalShotAt(x, y); // éteint la balle prédite sur l'impact
+        }
       }
     };
     const onBonusSpawn = (bonus) => {
