@@ -100,9 +100,15 @@ export default function HomePage() {
 
       <div className="home-inner">
         <header className="home-hero">
-          <h1 className="home-title">ECHO</h1>
+          <div className="home-eyebrow">
+            <span className="home-eyebrow-dot" aria-hidden />
+            Sonar&nbsp;Arena
+          </div>
+          <h1 className="home-title" data-text="ECHO">ECHO</h1>
           <p className="home-tagline">
-            L&apos;arène est noire. Émets un ping. Traque ton adversaire.
+            <span>L&apos;arène est noire.</span>
+            <span>Émets un ping.</span>
+            <span>Traque ton adversaire.</span>
           </p>
         </header>
 

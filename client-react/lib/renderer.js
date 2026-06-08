@@ -610,21 +610,61 @@ export class GameRenderer {
     this._drawEntity(ctx, me, this._teamColor(this.myTeam), now, { self: true });
   }
 
-  // Cercle vert de repérage, visible uniquement par le joueur local (rendu dans
-  // _drawSelf, qui n'existe que sur son client). L'aide à se localiser au milieu
-  // des coéquipiers de même couleur.
+  // Marqueur d'identité « c'est toi », visible uniquement par le joueur local
+  // (rendu dans _drawSelf, qui n'existe que sur son client). Aide à se localiser
+  // au milieu des coéquipiers de même couleur — sans le cercle vert criard
+  // d'avant : halo doux qui respire + réticule segmenté en rotation + balise
+  // chevron flottante. Le vert jade reste distinct des couleurs d'équipe
+  // (cyan/magenta) mais en version raffinée.
   _drawSelfMarker(ctx, me, now) {
-    const pulse = 0.6 + 0.25 * Math.sin(now / 350);
-    const r = PLAYER.RADIUS + 16;
+    const col = '120,255,180';                 // jade doux, lisible mais pas agressif
+    const breathe = 1 + 0.05 * Math.sin(now / 600);
+    const baseR = PLAYER.RADIUS + 13;
     ctx.save();
     ctx.translate(me.x, me.y);
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(80,255,120,${pulse})`;
+
+    // Halo radial diffus (pas d'anneau dur) qui respire lentement.
+    const auraR = baseR * 1.7 * breathe;
+    const halo = ctx.createRadialGradient(0, 0, baseR * 0.5, 0, 0, auraR);
+    halo.addColorStop(0, `rgba(${col},0)`);
+    halo.addColorStop(0.72, `rgba(${col},0.07)`);
+    halo.addColorStop(1, `rgba(${col},0)`);
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(0, 0, auraR, 0, Math.PI * 2); ctx.fill();
+
+    // Réticule de verrouillage : 4 arcs courts en rotation douce.
+    ctx.save();
+    ctx.rotate(now / 1700);
+    ctx.strokeStyle = `rgba(${col},0.92)`;
     ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(80,255,120,0.8)';
-    ctx.shadowBlur = 10;
-    ctx.stroke();
+    ctx.lineCap = 'round';
+    ctx.shadowColor = `rgba(${col},0.7)`;
+    ctx.shadowBlur = 7;
+    const r = baseR * breathe;
+    const seg = (Math.PI / 2) * 0.4;           // longueur de chaque arc
+    for (let i = 0; i < 4; i++) {
+      const a0 = i * (Math.PI / 2) + Math.PI / 4 - seg / 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, a0, a0 + seg);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Balise « toi » : petit chevron qui plane au-dessus avec un léger bob.
+    const bob = -(PLAYER.RADIUS + 24) + 2 * Math.sin(now / 420);
+    ctx.save();
+    ctx.translate(0, bob);
+    ctx.fillStyle = `rgba(${col},0.9)`;
+    ctx.shadowColor = `rgba(${col},0.85)`;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, 5);
+    ctx.lineTo(-5, -3);
+    ctx.lineTo(5, -3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
     ctx.restore();
   }
 

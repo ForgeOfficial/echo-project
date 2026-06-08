@@ -474,8 +474,12 @@ class GameEngine {
       // Soi-même et coéquipiers : toujours en clair.
       if (i === observerIndex) return full(p, true);
       if (p.team === obsTeam) return full(p, false);
+      // Culé : on ne garde que ce dont le HUD a besoin (hp + team). x:null =
+      // sentinelle « hors-vue » (pas de position → pas dessiné) ; angle/exposed
+      // sont inutiles sur un slot invisible.
+      const culled = { x: null, y: null, hp: p.hp, team: p.team };
       // Ennemi mort : pas de position (non dessiné de toute façon), HUD garde hp.
-      if (p.hp <= 0) return { x: null, y: null, angle: null, hp: p.hp, team: p.team, exposed: false };
+      if (p.hp <= 0) return culled;
       // Ennemi vivant : soumis à l'interest management.
       let visible = sd || p.exposed || revealsPoint(p.x, p.y);
       if (visible) {
@@ -483,7 +487,7 @@ class GameEngine {
       } else if (seen[i] && now - seen[i] < VISION.GRACE_MS) {
         visible = true; // grâce de sortie
       }
-      if (!visible) return { x: null, y: null, angle: null, hp: p.hp, team: p.team, exposed: false };
+      if (!visible) return culled;
       return full(p, false);
     });
 
