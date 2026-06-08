@@ -7,23 +7,23 @@ import { useRef, useState, useCallback } from 'react';
 const MAX_RADIUS = 40;
 const DEADZONE = 0.22;     // en deçà : aucun déplacement (zone morte au centre)
 const AXIS_THRESH = 0.38;  // au-delà : l'axe correspondant s'active
-const EDGE_MARGIN = 52;    // garde la base + son halo dans l'écran (pas de débord)
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 const NEUTRAL = { up: false, down: false, left: false, right: false };
 
 /**
  * Contrôles tactiles façon twin-thumb pour l'arène sonar.
- *  - Pouce gauche : joystick dynamique (apparaît sous le doigt) → déplacement + visée.
+ *  - Pouce gauche : joystick FIXE (toujours au même endroit) → déplacement + visée.
  *  - Pouce droit  : bouton TIR (cyan) et bouton ECHO (magenta), avec anneau de cooldown.
  * Les pointeurs sont indépendants (pointer events), donc on peut bouger et tirer en même temps.
  */
 export default function TouchControls({ onMove, onShoot, onPing, onFirstTouch, shootCooldownMs, pingCooldownMs }) {
-  const [stick, setStick] = useState(null);       // { bx, by, kx, ky } ou null
-  const stickPointer = useRef(null);              // pointerId qui pilote le joystick
+  const [knob, setKnob] = useState({ x: 0, y: 0 }); // décalage du knob / centre fixe
+  const [active, setActive] = useState(false);
+  const stickPointer = useRef(null);                // pointerId qui pilote le joystick
+  const centerRef = useRef({ x: 0, y: 0 });         // centre fixe de la base (px écran)
   const dirsRef = useRef(NEUTRAL);
   const zoneRef = useRef(null);
+  const baseRef = useRef(null);
 
   const emit = useCallback((dirs) => {
     const d = dirsRef.current;
@@ -43,40 +43,43 @@ export default function TouchControls({ onMove, onShoot, onPing, onFirstTouch, s
     };
   };
 
+  const apply = (clientX, clientY) => {
+    const c = centerRef.current;
+    let dx = clientX - c.x, dy = clientY - c.y;
+    const m = Math.hypot(dx, dy);
+    if (m > MAX_RADIUS) { dx = (dx / m) * MAX_RADIUS; dy = (dy / m) * MAX_RADIUS; }
+    emit(dirsFromVector(dx, dy));
+    setKnob({ x: dx, y: dy });
+  };
+
   const onZoneDown = (e) => {
     if (stickPointer.current !== null) return;
     stickPointer.current = e.pointerId;
     zoneRef.current?.setPointerCapture(e.pointerId);
     onFirstTouch?.();
-    // La base naît sous le pouce, mais on la décale juste assez pour que le
-    // halo ne déborde pas du bord de l'écran.
-    const bx = clamp(e.clientX, EDGE_MARGIN, window.innerWidth - EDGE_MARGIN);
-    const by = clamp(e.clientY, EDGE_MARGIN, window.innerHeight - EDGE_MARGIN);
-    setStick({ bx, by, kx: 0, ky: 0 });
+    // Centre = milieu de la base fixe (jamais déplacée → jamais hors écran).
+    const r = baseRef.current?.getBoundingClientRect();
+    if (r) centerRef.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    setActive(true);
+    apply(e.clientX, e.clientY);
   };
 
   const onZoneMove = (e) => {
     if (e.pointerId !== stickPointer.current) return;
-    setStick((s) => {
-      if (!s) return s;
-      let dx = e.clientX - s.bx, dy = e.clientY - s.by;
-      const m = Math.hypot(dx, dy);
-      if (m > MAX_RADIUS) { dx = (dx / m) * MAX_RADIUS; dy = (dy / m) * MAX_RADIUS; }
-      emit(dirsFromVector(dx, dy));
-      return { ...s, kx: dx, ky: dy };
-    });
+    apply(e.clientX, e.clientY);
   };
 
   const onZoneUp = (e) => {
     if (e.pointerId !== stickPointer.current) return;
     stickPointer.current = null;
     emit(NEUTRAL);
-    setStick(null);
+    setKnob({ x: 0, y: 0 });
+    setActive(false);
   };
 
   return (
     <div className="tc-overlay">
-      {/* ——— Zone gauche : joystick dynamique ——— */}
+      {/* ——— Zone gauche : capte le doigt, le joystick reste fixe ——— */}
       <div
         ref={zoneRef}
         className="tc-stick-zone"
@@ -85,17 +88,15 @@ export default function TouchControls({ onMove, onShoot, onPing, onFirstTouch, s
         onPointerUp={onZoneUp}
         onPointerCancel={onZoneUp}
       >
-        {stick && (
-          <div className="tc-stick" style={{ left: stick.bx, top: stick.by }}>
-            <span className="tc-stick-ring tc-stick-ring--2" />
-            <span className="tc-stick-ring" />
-            <span className="tc-stick-cross" />
-            <span
-              className="tc-stick-knob"
-              style={{ transform: `translate(calc(-50% + ${stick.kx}px), calc(-50% + ${stick.ky}px))` }}
-            />
-          </div>
-        )}
+        <div ref={baseRef} className={`tc-stick${active ? ' is-active' : ''}`}>
+          <span className="tc-stick-ring tc-stick-ring--2" />
+          <span className="tc-stick-ring" />
+          <span className="tc-stick-cross" />
+          <span
+            className="tc-stick-knob"
+            style={{ transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))` }}
+          />
+        </div>
       </div>
 
       {/* ——— Zone droite : actions ——— */}

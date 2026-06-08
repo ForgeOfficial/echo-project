@@ -451,11 +451,17 @@ body::after {
   touch-action: none;
 }
 
+/* Joystick FIXE : ancre 0×0 placée toujours au même point (coin bas-gauche).
+   getBoundingClientRect() de ce point = centre stable, jamais hors écran. */
 .tc-stick {
   position: absolute;
+  left: calc(env(safe-area-inset-left) + 86px);
+  bottom: calc(env(safe-area-inset-bottom) + 86px);
   width: 0; height: 0;
-  transform: translateZ(0);
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
 }
+.tc-stick.is-active { opacity: 1; }
 .tc-stick-ring,
 .tc-stick-ring--2 {
   position: absolute; top: 0; left: 0;
