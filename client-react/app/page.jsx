@@ -88,60 +88,86 @@ export default function HomePage() {
   }
 
   return (
-    <div style={{ position: 'relative', height: 'calc(100vh - 56px)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-      <canvas ref={bgRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
-      <div style={{ position: 'relative', textAlign: 'center' }}>
-        <h1 style={{
-          fontFamily: 'var(--font-display)', fontWeight: 900,
-          fontSize: 'clamp(4rem,14vw,9rem)', letterSpacing: '0.5em',
-          color: 'var(--cyan)', lineHeight: 1,
-          textShadow: '0 0 40px var(--cyan), 0 0 80px rgba(0,255,255,0.3), 0 0 120px rgba(0,255,255,0.1)',
-          marginBottom: '1rem',
-          animation: 'glitch 6s ease-in-out infinite',
-        }}>
-          ECHO
-        </h1>
-        <p style={{ color: 'var(--text-dim)', fontSize: '0.95rem', letterSpacing: '0.06em', marginBottom: '2.5rem' }}>
-          L&apos;arène est noire. Émets un ping. Traque ton adversaire.
-        </p>
-        <button className="btn btn-lg" onClick={handlePlay} style={{ marginBottom: '0.5rem' }}>
-          {user ? '▶ Jouer (1v1)' : 'Se connecter pour jouer'}
-        </button>
+    <div className="home">
+      <canvas ref={bgRef} className="home-bg" />
 
-        <div className="home-modes">
-          <div className="home-modes-label">En équipe — 2v2</div>
-          <div className="home-modes-row">
-            <button className="btn btn-outline" onClick={quickplay}>Partie rapide</button>
-            <button className="btn btn-outline" onClick={createPrivate}>Créer privé</button>
+      <div className="home-inner">
+        <header className="home-hero">
+          <h1 className="home-title">ECHO</h1>
+          <p className="home-tagline">
+            L&apos;arène est noire. Émets un ping. Traque ton adversaire.
+          </p>
+        </header>
+
+        <div className="mode-grid">
+          {/* ——— Carte vedette : 1v1 classé ——— */}
+          <button className="mode-card mode-card--featured" onClick={handlePlay}>
+            <span className="mode-card-glow" aria-hidden />
+            <div className="mode-card-head">
+              <span className="mode-card-tag">1V1</span>
+              <span className="mode-badge mode-badge--ranked">★ Classé</span>
+            </div>
+            <div className="mode-card-name">Duel</div>
+            <p className="mode-card-desc">
+              Tête-à-tête sonar. Chaque victoire compte au classement Elo.
+            </p>
+            <span className="mode-card-cta">
+              {user ? '▶ JOUER' : 'Se connecter pour jouer'}
+            </span>
+          </button>
+
+          {/* ——— Modes en équipe ——— */}
+          <div className="mode-team-col">
+            <div className="mode-team-label">En équipe — 2V2</div>
+
+            <button className="mode-card mode-card--team mode-card--public" onClick={quickplay}>
+              <div className="mode-card-head">
+                <span className="mode-card-tag">2V2</span>
+                <span className="mode-badge mode-badge--public">Public</span>
+              </div>
+              <div className="mode-card-name">Partie rapide</div>
+              <p className="mode-card-desc">Matchmaking d&apos;équipe instantané.</p>
+            </button>
+
+            <button className="mode-card mode-card--team mode-card--private" onClick={createPrivate}>
+              <div className="mode-card-head">
+                <span className="mode-card-tag">2V2</span>
+                <span className="mode-badge mode-badge--private">Privé</span>
+              </div>
+              <div className="mode-card-name">Créer privé</div>
+              <p className="mode-card-desc">Invite tes amis. Lance même en 2v1.</p>
+            </button>
+
+            <div className="mode-card mode-card--join">
+              <div className="mode-card-head">
+                <span className="mode-card-tag">CODE</span>
+                <span className="mode-badge mode-badge--join">Rejoindre</span>
+              </div>
+              <div className="mode-join-row">
+                <input
+                  className="mode-code-input"
+                  value={code}
+                  onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 4)); setLobbyErr(''); }}
+                  placeholder="0000"
+                  inputMode="numeric"
+                  maxLength={4}
+                  onKeyDown={(e) => e.key === 'Enter' && joinCode()}
+                />
+                <button className="btn" onClick={joinCode} disabled={code.length < 4}>Entrer</button>
+              </div>
+            </div>
           </div>
-          <div className="home-join-row">
-            <input
-              className="home-code-input"
-              value={code}
-              onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 4)); setLobbyErr(''); }}
-              placeholder="Code"
-              inputMode="numeric"
-              maxLength={4}
-              onKeyDown={(e) => e.key === 'Enter' && joinCode()}
-            />
-            <button className="btn btn-outline" onClick={joinCode}>Rejoindre</button>
-          </div>
-          {lobbyErr && <div className="lobby-error">{lobbyErr}</div>}
         </div>
 
-        <div style={{ color: 'var(--text-dim)', fontSize: '0.75rem', letterSpacing: '0.05em', marginTop: '1.5rem' }}>
+        {lobbyErr && <div className="lobby-error home-err">{lobbyErr}</div>}
+
+        <div className="home-online">
+          <span className="home-online-dot" />
           {onlineCount} joueur{onlineCount !== 1 ? 's' : ''} en ligne
         </div>
       </div>
+
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
-      <style>{`
-        @keyframes glitch {
-          0%, 90%, 100% { clip-path: none; transform: none; }
-          92% { clip-path: inset(20% 0 60% 0); transform: translateX(-3px); }
-          94% { clip-path: inset(60% 0 10% 0); transform: translateX(3px); }
-          96% { clip-path: none; transform: none; }
-        }
-      `}</style>
     </div>
   );
 }

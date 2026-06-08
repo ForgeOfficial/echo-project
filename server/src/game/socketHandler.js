@@ -155,7 +155,9 @@ function setupSocketHandlers(io) {
       const lobby = lobbies.get(userLobby.get(player.userId));
       if (!lobby) return;
       if (lobby.hostUserId !== player.userId) { socket.emit(EV.LOBBY_ERROR, { msg: "Seul l'hôte peut lancer" }); return; }
-      if (!isLobbyReady(lobby)) { socket.emit(EV.LOBBY_ERROR, { msg: 'Équipes incomplètes' }); return; }
+      // Privé : départ anticipé autorisé (≥1 joueur par équipe). Public : complet requis.
+      const ready = lobby.isPrivate ? canHostStart(lobby) : isLobbyReady(lobby);
+      if (!ready) { socket.emit(EV.LOBBY_ERROR, { msg: 'Il faut au moins un joueur par équipe' }); return; }
       startLobby(io, lobby);
     });
 
@@ -426,6 +428,14 @@ function isLobbyReady(lobby) {
   return teamCounts(lobby).every(x => x === lobby.mode.teamSize);
 }
 
+// Départ anticipé réservé aux salons privés : l'hôte peut lancer dès que chaque
+// équipe a au moins un joueur (1v1, 2v1…), sans attendre que ce soit complet.
+function canHostStart(lobby) {
+  if (!lobby.isPrivate) return false;
+  if (lobby.members.length < 2) return false;
+  return teamCounts(lobby).every(x => x >= 1);
+}
+
 function lobbySnapshot(lobby) {
   return {
     code: lobby.code,
@@ -434,6 +444,7 @@ function lobbySnapshot(lobby) {
     mode: publicMode(lobby.mode),
     members: lobby.members.map(m => ({ userId: m.userId, pseudo: m.pseudo, team: m.team, connected: m.connected })),
     canStart: isLobbyReady(lobby),
+    canHostStart: canHostStart(lobby),
   };
 }
 

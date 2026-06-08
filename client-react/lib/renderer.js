@@ -541,7 +541,26 @@ export class GameRenderer {
     if (!me || me.hp <= 0) return;
     const isHit = (this._hitFlash[this.myPlayerIndex] || 0) > 0;
     if (isHit && Math.floor(now / 70) % 2 === 0) return;
+    this._drawSelfMarker(ctx, me, now);
     this._drawEntity(ctx, me, this._teamColor(this.myTeam), now, { self: true });
+  }
+
+  // Cercle vert de repérage, visible uniquement par le joueur local (rendu dans
+  // _drawSelf, qui n'existe que sur son client). L'aide à se localiser au milieu
+  // des coéquipiers de même couleur.
+  _drawSelfMarker(ctx, me, now) {
+    const pulse = 0.6 + 0.25 * Math.sin(now / 350);
+    const r = PLAYER.RADIUS + 16;
+    ctx.save();
+    ctx.translate(me.x, me.y);
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(80,255,120,${pulse})`;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(80,255,120,0.8)';
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Entité partagée : halo + anneau + proue directionnelle + coeur dégradé.

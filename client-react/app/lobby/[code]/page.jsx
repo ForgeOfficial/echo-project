@@ -61,10 +61,18 @@ export default function LobbyPage() {
   const me = lobby.members.find(m => m.userId === user?.id);
   const isHost = lobby.hostUserId === user?.id;
   const full = lobby.members.length >= mode.totalPlayers;
+  // Privé : l'hôte peut lancer en sous-effectif (1v1 / 2v1…). Public : complet requis.
+  const hostCanStart = lobby.isPrivate ? lobby.canHostStart : lobby.canStart;
 
   let status;
-  if (lobby.isPrivate) status = isHost ? (lobby.canStart ? 'Prêt à lancer' : 'Complète les équipes (2 par camp)') : "En attente de l'hôte…";
-  else status = lobby.canStart ? 'Démarrage…' : `En attente de joueurs… (${lobby.members.length}/${mode.totalPlayers})`;
+  if (lobby.isPrivate) {
+    if (!isHost) status = "En attente de l'hôte…";
+    else if (full) status = 'Prêt à lancer';
+    else if (lobby.canHostStart) status = `Lançable en ${lobby.members.length}/${mode.totalPlayers} (sous-effectif possible)`;
+    else status = 'Il faut au moins un joueur par équipe';
+  } else {
+    status = lobby.canStart ? 'Démarrage…' : `En attente de joueurs… (${lobby.members.length}/${mode.totalPlayers})`;
+  }
 
   return (
     <div className="lobby-screen">
@@ -120,7 +128,12 @@ export default function LobbyPage() {
         <div className="lobby-actions">
           <button className="btn btn-outline" onClick={leave}>Quitter</button>
           {lobby.isPrivate && isHost ? (
-            <button className="btn" onClick={start} disabled={!lobby.canStart}>Lancer la partie</button>
+            <div className="lobby-start-wrap">
+              <span className="lobby-status">{status}</span>
+              <button className="btn" onClick={start} disabled={!hostCanStart}>
+                {full ? 'Lancer la partie' : `Lancer (${lobby.members.length} joueurs)`}
+              </button>
+            </div>
           ) : (
             <span className="lobby-status">{status}</span>
           )}
