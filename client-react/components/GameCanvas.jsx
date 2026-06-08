@@ -110,6 +110,9 @@ export default function GameCanvas({ matchData, initialState }) {
     renderer.myPlayerIndex = myIdxRef.current;
     renderer.myTeam = matchData?.myTeam ?? 0;
     if (matchData?.mode?.teamColors) renderer.teamColors = matchData.mode.teamColors;
+    // Prédiction locale : le renderer lit l'état d'entrée courant (clavier + tactile)
+    // pour simuler mon déplacement sans attendre l'aller-retour réseau.
+    renderer.enablePrediction(buildInputs);
     rendererRef.current = renderer;
     // État initial fourni par JOIN_GAME (murs + positions) : évite d'attendre
     // le prochain full-state pour afficher l'arène, y compris en reconnexion.

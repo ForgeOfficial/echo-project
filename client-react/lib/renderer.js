@@ -31,6 +31,14 @@ export class GameRenderer {
     this._buffer = [];
     this._interpDelay = 90; // ms (≈ 2,7 ticks à 30Hz, absorbe le jitter)
 
+    // Prédiction locale : MON perso est simulé côté client (physique identique
+    // au serveur) pour une réponse instantanée, puis réconcilié en douceur avec
+    // l'autorité serveur. Les autres restent interpolés (cf. _interpDelay).
+    this._predEnabled = false;
+    this._getInputs = null;     // () => { up, down, left, right }
+    this._pred = null;          // { x, y, angle } position prédite, ou null (mort/non init)
+    this._wallSetPred = null;   // Set("col,row") pour la collision locale
+
     this._celebration = null;
     this._confetti = [];
     this._lastCelebTs = 0;
@@ -60,9 +68,94 @@ export class GameRenderer {
   stop() { if (this._rafId) cancelAnimationFrame(this._rafId); this._rafId = null; }
 
   setState(state) {
-    if (state.walls) this._lastWalls = state.walls;
+    if (state.walls) {
+      this._lastWalls = state.walls;
+      // Index des murs pour la collision prédite (mêmes clés que le serveur).
+      this._wallSetPred = new Set(
+        state.walls.map(w => `${Math.round(w.x / ARENA.CELL_SIZE)},${Math.round(w.y / ARENA.CELL_SIZE)}`)
+      );
+    }
     this._buffer.push({ t: performance.now(), state });
     if (this._buffer.length > 16) this._buffer.shift();
+  }
+
+  // Active la prédiction du joueur local. getInputs() doit renvoyer l'état
+  // d'entrée courant (le même qui est envoyé au serveur).
+  enablePrediction(getInputs) {
+    this._getInputs = getInputs;
+    this._predEnabled = true;
+  }
+
+  // Avance la position prédite d'une frame, puis la réconcilie avec le serveur.
+  _stepPrediction(dtMs) {
+    if (!this._predEnabled || !this._getInputs) return;
+    const latest = this._buffer[this._buffer.length - 1]?.state;
+    const me = latest?.players?.[this.myPlayerIndex];
+    if (!me) return;
+    if (me.hp <= 0) { this._pred = null; return; }       // mort → on affiche le serveur
+    if (!this._pred) { this._pred = { x: me.x, y: me.y, angle: me.angle || 0 }; }
+
+    const dt = Math.min(dtMs, 50) / 1000;                // clamp anti-saut (onglet en arrière-plan)
+    const inp = this._getInputs();
+    let dx = 0, dy = 0;
+    if (inp.up) dy -= 1;
+    if (inp.down) dy += 1;
+    if (inp.left) dx -= 1;
+    if (inp.right) dx += 1;
+    if (dx !== 0 && dy !== 0) { dx /= Math.SQRT2; dy /= Math.SQRT2; }
+    if (dx !== 0 || dy !== 0) this._pred.angle = Math.atan2(dy, dx);
+
+    let nx = this._pred.x + dx * PLAYER.SPEED * dt;
+    let ny = this._pred.y + dy * PLAYER.SPEED * dt;
+    nx = Math.max(PLAYER.RADIUS, Math.min(ARENA.WIDTH - PLAYER.RADIUS, nx));
+    ny = Math.max(PLAYER.RADIUS, Math.min(ARENA.HEIGHT - PLAYER.RADIUS, ny));
+    // Collision axe par axe, exactement comme le serveur (murs désactivés en mort subite).
+    const useWalls = !latest.suddenDeath;
+    if (!(useWalls && this._predWall(nx, this._pred.y)) && !this._predPlayer(latest, nx, this._pred.y)) this._pred.x = nx;
+    if (!(useWalls && this._predWall(this._pred.x, ny)) && !this._predPlayer(latest, this._pred.x, ny)) this._pred.y = ny;
+
+    // Réconciliation : zone morte = l'avance de prédiction normale due à la
+    // latence (on ne la corrige pas → pas de rubber-band). Au-delà = vrai
+    // désync (poussée d'un adversaire, perte de paquet) → on rattrape en douceur.
+    const err = Math.hypot(me.x - this._pred.x, me.y - this._pred.y);
+    if (err > 90) {
+      this._pred.x = me.x; this._pred.y = me.y;          // gros écart → snap
+    } else if (err > 28) {
+      const k = 0.18;
+      this._pred.x += (me.x - this._pred.x) * k;
+      this._pred.y += (me.y - this._pred.y) * k;
+    }
+  }
+
+  _predWall(x, y) {
+    const set = this._wallSetPred;
+    if (!set || set.size === 0) return false;
+    const S = ARENA.CELL_SIZE, R = PLAYER.RADIUS;
+    const minC = Math.floor((x - R) / S), maxC = Math.floor((x + R) / S);
+    const minR = Math.floor((y - R) / S), maxR = Math.floor((y + R) / S);
+    for (let r = minR; r <= maxR; r++) {
+      for (let c = minC; c <= maxC; c++) {
+        if (set.has(`${c},${r}`)) {
+          const wx = c * S, wy = r * S;
+          const nearX = Math.max(wx, Math.min(wx + S, x));
+          const nearY = Math.max(wy, Math.min(wy + S, y));
+          if (Math.hypot(x - nearX, y - nearY) < R) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  _predPlayer(latest, x, y) {
+    const players = latest.players || [];
+    const min = PLAYER.RADIUS * 2;
+    for (let i = 0; i < players.length; i++) {
+      if (i === this.myPlayerIndex) continue;
+      const o = players[i];
+      if (!o || o.hp <= 0) continue;
+      if (Math.hypot(x - o.x, y - o.y) < min) return true;
+    }
+    return false;
   }
 
   // Reconstruit un état positionnel interpolé à (now - délai).
@@ -77,23 +170,34 @@ export class GameRenderer {
       suddenDeath: latest.suddenDeath,
       walls: this._lastWalls,
     };
+    let players, projectiles;
     if (buf.length === 1) {
-      return { ...base, players: latest.players, projectiles: latest.projectiles };
+      players = latest.players;
+      projectiles = latest.projectiles;
+    } else {
+      const renderT = performance.now() - this._interpDelay;
+      let a = buf[0], b = buf[1];
+      for (let i = 0; i < buf.length - 1; i++) {
+        if (buf[i].t <= renderT && buf[i + 1].t >= renderT) { a = buf[i]; b = buf[i + 1]; break; }
+        a = buf[i]; b = buf[i + 1];
+      }
+      const span = b.t - a.t;
+      let f = span > 0 ? (renderT - a.t) / span : 1;
+      f = Math.max(0, Math.min(1, f));
+      players = this._lerpPlayers(a.state.players, b.state.players, f);
+      projectiles = this._lerpProjectiles(a.state.projectiles, b.state.projectiles, f);
     }
-    const renderT = performance.now() - this._interpDelay;
-    let a = buf[0], b = buf[1];
-    for (let i = 0; i < buf.length - 1; i++) {
-      if (buf[i].t <= renderT && buf[i + 1].t >= renderT) { a = buf[i]; b = buf[i + 1]; break; }
-      a = buf[i]; b = buf[i + 1];
+
+    // MON perso : on remplace la position serveur (en retard) par la position
+    // prédite localement → réponse instantanée aux entrées.
+    if (this._pred && players && players[this.myPlayerIndex]) {
+      players = players.slice();
+      players[this.myPlayerIndex] = {
+        ...players[this.myPlayerIndex],
+        x: this._pred.x, y: this._pred.y, angle: this._pred.angle,
+      };
     }
-    const span = b.t - a.t;
-    let f = span > 0 ? (renderT - a.t) / span : 1;
-    f = Math.max(0, Math.min(1, f));
-    return {
-      ...base,
-      players: this._lerpPlayers(a.state.players, b.state.players, f),
-      projectiles: this._lerpProjectiles(a.state.projectiles, b.state.projectiles, f),
-    };
+    return { ...base, players, projectiles };
   }
 
   _lerpAngle(a, b, f) {
@@ -164,6 +268,7 @@ export class GameRenderer {
     for (let i = 0; i < this._hitFlash.length; i++) {
       this._hitFlash[i] = Math.max(0, (this._hitFlash[i] || 0) - dt);
     }
+    this._stepPrediction(dt);
     this._draw();
     this._rafId = requestAnimationFrame(ts2 => this._loop(ts2));
   }
