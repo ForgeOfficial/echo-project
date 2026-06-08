@@ -35,7 +35,13 @@ const GAME = {
   TICK_MS: 33,
   FULL_STATE_INTERVAL_MS: 2000,
   MAX_DURATION_MS: 180000,
-  RECONNECT_TIMEOUT_MS: 10000,
+  // Délai de grâce après une déconnexion : la partie continue (le joueur figé
+  // reste tuable), mais s'il ne revient pas dans ce laps de temps, l'adversaire
+  // gagne par abandon.
+  RECONNECT_TIMEOUT_MS: 45000,
+  // Durée pendant laquelle on conserve le résultat d'une partie terminée, pour
+  // qu'un joueur absent (page fermée) qui revient sur /games/:id voie l'issue.
+  FINISHED_GAME_TTL_MS: 120000,
 };
 
 const ELO = {
@@ -66,7 +72,11 @@ const SOCKET_EVENTS = {
   QUEUE_LEAVE: 'queue:leave',
   QUEUE_STATUS: 'queue:status',
   PLAYER_HIT: 'player:hit',
-  RECONNECT: 'reconnect:attempt',
+  // (Re)joindre une partie par son UUID : sert au démarrage d'un match comme
+  // au retour après une fermeture de page.
+  JOIN_GAME: 'game:join',
+  GAME_JOINED: 'game:joined',
+  GAME_NOT_FOUND: 'game:not-found',
 };
 
 if (typeof module !== 'undefined') {

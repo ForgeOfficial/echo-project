@@ -5,7 +5,7 @@ import { GameRenderer } from '../lib/renderer';
 import { EV, ARENA, PLAYER } from '../lib/constants';
 import { audio } from '../lib/audio';
 
-export default function GameCanvas({ onEnd, matchData }) {
+export default function GameCanvas({ matchData, initialState }) {
   const { socket, user } = useApp();
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);
@@ -78,6 +78,12 @@ export default function GameCanvas({ onEnd, matchData }) {
     // création du renderer : on applique l'index ici pour la bonne POV.
     renderer.myPlayerIndex = myIdxRef.current;
     rendererRef.current = renderer;
+    // État initial fourni par JOIN_GAME (murs + positions) : évite d'attendre
+    // le prochain full-state pour afficher l'arène, y compris en reconnexion.
+    if (initialState) {
+      if (initialState.walls) wallsRef.current = initialState.walls;
+      renderer.setState(initialState);
+    }
     renderer.start();
     return () => renderer.stop();
   }, []);
@@ -102,32 +108,17 @@ export default function GameCanvas({ onEnd, matchData }) {
         audio.hitConfirm();                              // je touche l'adversaire
       }
     };
-    const onGameEnd = (data) => {
-      rendererRef.current?.stop();
-      keysRef.current = {};
-      s.emit(EV.PLAYER_INPUT, { up: false, down: false, left: false, right: false });
-      const result = data.winnerIndex === myIdxRef.current ? 'win' : data.winnerIndex === -1 ? 'draw' : 'lose';
-      onEnd?.(result, data.myStats, data.eloDelta, data.winnerIndex);
-    };
-    const onAbandoned = (data) => {
-      rendererRef.current?.stop();
-      const result = data.winnerIndex === myIdxRef.current ? 'win' : 'lose';
-      onEnd?.(result, { pings: 0, shots: 0, hits: 0 }, 0, data.winnerIndex);
-    };
-
+    // La fin de partie (GAME_END) est gérée au niveau de la page /games/:id :
+    // elle démonte GameCanvas, ce qui stoppe le renderer via le cleanup.
     s.on(EV.GAME_FULL_STATE, onFullState);
     s.on(EV.GAME_STATE, onState);
     s.on(EV.PLAYER_HIT, onHit);
-    s.on(EV.GAME_END, onGameEnd);
-    s.on(EV.GAME_ABANDONED, onAbandoned);
     return () => {
       s.off(EV.GAME_FULL_STATE, onFullState);
       s.off(EV.GAME_STATE, onState);
       s.off(EV.PLAYER_HIT, onHit);
-      s.off(EV.GAME_END, onGameEnd);
-      s.off(EV.GAME_ABANDONED, onAbandoned);
     };
-  }, [socket, onEnd, playDamageFx]);
+  }, [socket, playDamageFx]);
 
   useEffect(() => {
     // Touches qui font défiler la page par défaut → on bloque le scroll,

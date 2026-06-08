@@ -34,7 +34,8 @@ export const GAME = {
   TICK_MS: 33,
   FULL_STATE_INTERVAL_MS: 2000,
   MAX_DURATION_MS: 180000,
-  RECONNECT_TIMEOUT_MS: 10000,
+  RECONNECT_TIMEOUT_MS: 45000,
+  FINISHED_GAME_TTL_MS: 120000,
 };
 
 export const ELO = {
@@ -65,6 +66,9 @@ export const EV = {
   QUEUE_LEAVE:     'queue:leave',
   QUEUE_STATUS:    'queue:status',
   PLAYER_HIT:      'player:hit',
+  JOIN_GAME:       'game:join',
+  GAME_JOINED:     'game:joined',
+  GAME_NOT_FOUND:  'game:not-found',
 };
 
 export function getRank(elo) {

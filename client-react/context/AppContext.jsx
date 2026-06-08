@@ -12,6 +12,10 @@ export function AppProvider({ children }) {
   const socketRef = useRef(null);
   const currentTokenRef = useRef(undefined);
   const [socketReady, setSocketReady] = useState(false);
+  // Passe à true une fois le refresh initial du token résolu : avant ça, `user`
+  // peut être null sans que l'utilisateur soit réellement déconnecté. Les pages
+  // protégées (jeu) attendent ce flag avant de décider de rediriger.
+  const [authReady, setAuthReady] = useState(false);
 
   const connectSocket = useCallback((token) => {
     const t = token || '';
@@ -34,7 +38,7 @@ export function AppProvider({ children }) {
     api.tryRefresh().then(ok => {
       // En cas de succès, onTokenChange a déjà (re)connecté le socket.
       if (!ok) connectSocket(null);
-    });
+    }).finally(() => setAuthReady(true));
     return () => {
       socketRef.current?.disconnect();
       socketRef.current = null;
@@ -67,7 +71,7 @@ export function AppProvider({ children }) {
   }, [connectSocket]);
 
   return (
-    <AppCtx.Provider value={{ user, setUser, onlineCount, socket: socketRef, socketReady, login, register, logout }}>
+    <AppCtx.Provider value={{ user, setUser, onlineCount, socket: socketRef, socketReady, authReady, login, register, logout }}>
       {children}
     </AppCtx.Provider>
   );
