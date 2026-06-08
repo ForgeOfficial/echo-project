@@ -30,6 +30,12 @@ export const PROJECTILE = {
   MAX_ACTIVE: 3,
 };
 
+// Doit rester identique à shared/constants.js (interest management serveur ↔ rendu).
+export const VISION = {
+  VIEW_RADIUS: 230,
+  GRACE_MS: 250,
+};
+
 export const GAME = {
   TICK_MS: 33,
   FULL_STATE_INTERVAL_MS: 2000,

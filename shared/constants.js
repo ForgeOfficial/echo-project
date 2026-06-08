@@ -31,6 +31,17 @@ const PROJECTILE = {
   MAX_ACTIVE: 3,
 };
 
+// Interest management (anti-wallhack + scaling) : le serveur ne révèle à chaque
+// joueur que les ennemis qu'il « voit » réellement. Source partagée client/serveur.
+const VISION = {
+  // Rayon de révélation autour d'un coéquipier vivant (un peu plus large que
+  // PROX_FAR côté rendu pour que l'entité soit déjà bufferisée → fondu d'entrée).
+  VIEW_RADIUS: 230,
+  // Grâce de sortie : on continue d'envoyer la position pendant ce délai après
+  // que l'ennemi quitte toutes les conditions de vue → fondu de sortie (pas de clignotement).
+  GRACE_MS: 250,
+};
+
 const GAME = {
   TICK_MS: 33,
   FULL_STATE_INTERVAL_MS: 2000,
@@ -90,5 +101,5 @@ const SOCKET_EVENTS = {
 };
 
 if (typeof module !== 'undefined') {
-  module.exports = { ARENA, PLAYER, SONAR, PROJECTILE, GAME, ELO, RANKS, SOCKET_EVENTS };
+  module.exports = { ARENA, PLAYER, SONAR, PROJECTILE, VISION, GAME, ELO, RANKS, SOCKET_EVENTS };
 }

@@ -19,7 +19,8 @@ const TEAM_NAMES_2 = ['Rouge', 'Bleu'];
 // plus la carte est grande (cellules de 40px, ratio ~4:3). Source unique
 // partagée client/serveur pour que physique et rendu coïncident.
 function arenaForPlayers(n) {
-  const cols = Math.max(20, Math.min(34, 16 + n * 2)); // 2j→20, 8j→32
+  // 2j→20, 8j→26, 16j→37, 30j→55 (densité de joueurs raisonnable jusqu'à ~32).
+  const cols = Math.max(20, Math.min(60, Math.round(16 + n * 1.3)));
   const rows = Math.round(cols * 0.75);
   const CELL_SIZE = 40;
   return { CELL_SIZE, COLS: cols, ROWS: rows, WIDTH: cols * CELL_SIZE, HEIGHT: rows * CELL_SIZE };
@@ -40,17 +41,18 @@ function buildCustomMode(config = {}) {
   const durationSec = clampInt(config.durationSec, 30, 600, 120);
   const borderMap = !!config.borderMap;
 
+  const MAX_PLAYERS = 32; // borne dure (interest management → scaling ~30j)
   let teamCount, teamSize, totalPlayers;
   if (format === 'ffa') {
-    totalPlayers = clampInt(config.playerCount, 2, 8, 4);
+    totalPlayers = clampInt(config.playerCount, 2, MAX_PLAYERS, 4);
     teamCount = totalPlayers; // chacun son "équipe"
     teamSize = 1;
   } else {
-    teamCount = clampInt(config.teamCount, 2, 4, 2);
-    teamSize = clampInt(config.teamSize, 1, 4, 2);
+    teamCount = clampInt(config.teamCount, 2, 8, 2); // palette = 8 couleurs
+    teamSize = clampInt(config.teamSize, 1, 8, 2);
     totalPlayers = teamCount * teamSize;
-    if (totalPlayers > 8) { // borne dure : on réduit la taille d'équipe
-      teamSize = Math.max(1, Math.floor(8 / teamCount));
+    if (totalPlayers > MAX_PLAYERS) { // borne dure : on réduit la taille d'équipe
+      teamSize = Math.max(1, Math.floor(MAX_PLAYERS / teamCount));
       totalPlayers = teamCount * teamSize;
     }
   }

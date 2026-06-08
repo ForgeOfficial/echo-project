@@ -44,7 +44,7 @@ export default function CustomGameModal({ onClose, onCreate }) {
   const [borderMap, setBorderMap] = useState(true);
 
   const total = format === 'ffa' ? playerCount : teamCount * teamSize;
-  const tooMany = total > 8;
+  const tooMany = total > 32;
 
   function submit() {
     if (tooMany) return;
@@ -71,15 +71,15 @@ export default function CustomGameModal({ onClose, onCreate }) {
 
         {/* Effectif */}
         {format === 'ffa' ? (
-          <Stepper label="Joueurs" value={playerCount} min={2} max={8} onChange={setPlayerCount} />
+          <Stepper label="Joueurs" value={playerCount} min={2} max={32} onChange={setPlayerCount} />
         ) : (
           <div className="cg-row2">
-            <Stepper label="Équipes" value={teamCount} min={2} max={4} onChange={setTeamCount} />
-            <Stepper label="Par équipe" value={teamSize} min={1} max={4} onChange={setTeamSize} />
+            <Stepper label="Équipes" value={teamCount} min={2} max={8} onChange={setTeamCount} />
+            <Stepper label="Par équipe" value={teamSize} min={1} max={8} onChange={setTeamSize} />
           </div>
         )}
         <div className={`cg-total${tooMany ? ' err' : ''}`}>
-          {tooMany ? `Trop de joueurs (${total}) — max 8` : `${total} joueurs · arène adaptée`}
+          {tooMany ? `Trop de joueurs (${total}) — max 32` : `${total} joueurs · arène adaptée`}
         </div>
 
         {/* Durée */}

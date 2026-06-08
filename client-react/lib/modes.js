@@ -6,7 +6,8 @@ export const TEAM_PALETTE = [
 
 // Doit rester identique à shared/modes.js (physique serveur ↔ rendu client).
 export function arenaForPlayers(n) {
-  const cols = Math.max(20, Math.min(34, 16 + n * 2));
+  // 2j→20, 8j→26, 16j→37, 30j→55. Identique à shared/modes.js.
+  const cols = Math.max(20, Math.min(60, Math.round(16 + n * 1.3)));
   const rows = Math.round(cols * 0.75);
   const CELL_SIZE = 40;
   return { CELL_SIZE, COLS: cols, ROWS: rows, WIDTH: cols * CELL_SIZE, HEIGHT: rows * CELL_SIZE };

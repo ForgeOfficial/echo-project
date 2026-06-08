@@ -500,7 +500,7 @@ body::after {
 
 /* ═══════════════ HUD scoreboard (FFA / 3+ équipes) ═══════════════ */
 .hud-member.dead { opacity: 0.4; filter: grayscale(0.6); }
-.hud-scoreboard { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 1; align-items: center; }
+.hud-scoreboard { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 1; align-items: center; max-height: 64px; overflow-y: auto; }
 .hud-chip {
   display: flex; align-items: center; gap: 0.45rem;
   padding: 0.2rem 0.55rem; border: 1px solid var(--border); border-radius: 99px;

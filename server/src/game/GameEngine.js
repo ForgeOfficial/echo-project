@@ -1,4 +1,4 @@
-const { PLAYER, SONAR, PROJECTILE, GAME } = require('../../../shared/constants');
+const { PLAYER, SONAR, PROJECTILE, VISION, GAME } = require('../../../shared/constants');
 const { MODES, arenaForPlayers } = require('../../../shared/modes');
 
 // Zone toxique (border map) : rectangle central qui rétrécit avec le temps.
@@ -41,6 +41,9 @@ class GameEngine {
     this._waveIdSeq = 0;
     this._events = [];
     this.suddenDeath = false;
+    // Grâce de sortie de l'interest management : _lastSeen[observer][enemy] = ts
+    // de la dernière fois où l'observateur a réellement vu cet ennemi.
+    this._lastSeen = [];
 
     this._teamSpawns = this._pickTeamSpawns(); // [team][slot] = [col,row]
     this._teamFill = new Array(this.teamCount).fill(0);
@@ -84,9 +87,12 @@ class GameEngine {
         }
       }
     });
+    // Densité de murs : un peu plus clairsemée sur les grandes arènes (gros
+    // effectifs) pour ne pas isoler des joueurs dans des poches fermées.
+    const density = cols > 40 ? 0.18 : 0.22;
     for (let r = 1; r < rows - 1; r++) {
       for (let c = 1; c < cols - 1; c++) {
-        if (!safeZones.has(`${c},${r}`) && Math.random() < 0.22) {
+        if (!safeZones.has(`${c},${r}`) && Math.random() < density) {
           walls.push({ x: c * S, y: r * S });
         }
       }
@@ -411,94 +417,99 @@ class GameEngine {
     return -1;
   }
 
-  computeVisibility() {
-    const A = this.arena;
-    const S = A.CELL_SIZE;
-    const total = A.COLS * A.ROWS;
-    const n = this.players.length;
-    // Mort subite : toute la carte est claire pour tout le monde.
-    if (this.suddenDeath) {
-      return this.players.map(() => new Array(total).fill(true));
-    }
-    const vis = this.players.map(() => new Array(total).fill(false));
+  // Interest management : état taillé pour un observateur. On n'envoie la
+  // position réelle d'un ennemi (et de ses projectiles) que s'il est réellement
+  // « vu » — sinon le slot est conservé avec x/y/angle = null (HUD : hp + équipe
+  // restent envoyés). Ferme la faille wallhack ET divise la bande passante.
+  //
+  // Un ennemi E est visible pour l'observateur O si AU MOINS une condition :
+  //   1. à ≤ VIEW_RADIUS d'un joueur vivant de l'équipe de O (proximité partagée)
+  //   2. balayé par la bande au front d'une onde sonar de l'équipe de O
+  //   3. exposé (il vient de pinger → il se trahit)
+  //   4. mort subite (tout le monde se voit)
+  //   5. grâce : vu il y a moins de GRACE_MS (fondu de sortie)
+  getStateFor(observerIndex) {
     const now = Date.now();
+    const sd = this.suddenDeath;
+    const observer = this.players[observerIndex];
+    const obsTeam = observer ? observer.team : -1;
 
-    // Vrai sonar : seule la BANDE au front de l'onde révèle, dans la limite de
-    // portée → blip fugace, pas de révélation instantanée de toute la zone.
+    // Sources de révélation de l'équipe de l'observateur : coéquipiers vivants
+    // (proximité) + bandes au front des ondes sonar de l'équipe.
+    const sources = [];
+    for (const p of this.players) {
+      if (p.hp > 0 && p.team === obsTeam) sources.push(p);
+    }
     const lingerDist = SONAR.SPEED * (SONAR.REVEAL_LINGER_MS / 1000);
-    for (const wave of this.sonarWaves) {
-      if (!vis[wave.playerIndex]) continue;
-      const elapsed = now - wave.startTime;
+    const bands = [];
+    const teamWaves = [];
+    for (const w of this.sonarWaves) {
+      const owner = this.players[w.playerIndex];
+      if (!owner || owner.team !== obsTeam) continue;
+      teamWaves.push(w);
+      const elapsed = now - w.startTime;
       const front = Math.min((elapsed / 1000) * SONAR.SPEED, SONAR.MAX_RADIUS);
-      const innerEdge = front - lingerDist;
-      for (let r = 0; r < A.ROWS; r++) {
-        for (let c = 0; c < A.COLS; c++) {
-          const cx = c * S + S / 2;
-          const cy = r * S + S / 2;
-          const dist = Math.hypot(cx - wave.x, cy - wave.y);
-          if (dist <= SONAR.MAX_RADIUS && dist <= front && dist >= innerEdge) {
-            vis[wave.playerIndex][r * A.COLS + c] = true;
-          }
-        }
+      if (front > 0) bands.push({ x: w.x, y: w.y, front, inner: front - lingerDist });
+    }
+
+    const revealsPoint = (x, y) => {
+      for (const s of sources) {
+        if (Math.hypot(x - s.x, y - s.y) <= VISION.VIEW_RADIUS) return true;
+      }
+      for (const b of bands) {
+        const d = Math.hypot(x - b.x, y - b.y);
+        if (d <= SONAR.MAX_RADIUS && d <= b.front && d >= b.inner) return true;
+      }
+      return false;
+    };
+
+    const seen = (this._lastSeen[observerIndex] || (this._lastSeen[observerIndex] = {}));
+    const full = (p, withPing) => {
+      const o = { x: p.x, y: p.y, angle: p.angle, hp: p.hp, team: p.team, exposed: p.exposed };
+      if (withPing) o.lastPingTime = p.lastPingTime; // utile seulement pour soi (anneau de cooldown)
+      return o;
+    };
+
+    const players = this.players.map((p, i) => {
+      // Soi-même et coéquipiers : toujours en clair.
+      if (i === observerIndex) return full(p, true);
+      if (p.team === obsTeam) return full(p, false);
+      // Ennemi mort : pas de position (non dessiné de toute façon), HUD garde hp.
+      if (p.hp <= 0) return { x: null, y: null, angle: null, hp: p.hp, team: p.team, exposed: false };
+      // Ennemi vivant : soumis à l'interest management.
+      let visible = sd || p.exposed || revealsPoint(p.x, p.y);
+      if (visible) {
+        seen[i] = now;
+      } else if (seen[i] && now - seen[i] < VISION.GRACE_MS) {
+        visible = true; // grâce de sortie
+      }
+      if (!visible) return { x: null, y: null, angle: null, hp: p.hp, team: p.team, exposed: false };
+      return full(p, false);
+    });
+
+    const projectiles = [];
+    for (const pr of this.projectiles) {
+      const owner = this.players[pr.playerIndex];
+      const friendly = owner && owner.team === obsTeam;
+      if (friendly || sd || revealsPoint(pr.x, pr.y)) {
+        projectiles.push({ id: pr.id, x: pr.x, y: pr.y, vx: pr.vx, vy: pr.vy, playerIndex: pr.playerIndex });
       }
     }
 
-    for (let pi = 0; pi < n; pi++) {
-      const p = this.players[pi];
-      if (!p) continue;
-      const pc = Math.floor(p.x / S);
-      const pr = Math.floor(p.y / S);
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          const r = pr + dr, c = pc + dc;
-          if (r >= 0 && r < A.ROWS && c >= 0 && c < A.COLS) {
-            vis[pi][r * A.COLS + c] = true;
-          }
-        }
-      }
-    }
-
-    // Vision partagée : union de la vision au sein de chaque équipe.
-    if (this.sharedVision) {
-      const teamMask = new Map();
-      for (let pi = 0; pi < n; pi++) {
-        const t = this.players[pi].team;
-        let m = teamMask.get(t);
-        if (!m) { m = new Array(total).fill(false); teamMask.set(t, m); }
-        const v = vis[pi];
-        for (let k = 0; k < total; k++) if (v[k]) m[k] = true;
-      }
-      for (let pi = 0; pi < n; pi++) vis[pi] = teamMask.get(this.players[pi].team);
-    }
-
-    return vis;
-  }
-
-  getState() {
-    const now = Date.now();
-    const visibility = this.computeVisibility();
     return {
-      players: this.players.map(p => ({
-        x: p.x, y: p.y, angle: p.angle, hp: p.hp, team: p.team,
-        exposed: p.exposed,
-        lastPingTime: p.lastPingTime,
-        invincible: Date.now() < p.invincibleUntil,
-      })),
-      projectiles: this.projectiles.map(p => ({
-        id: p.id, x: p.x, y: p.y, vx: p.vx, vy: p.vy, playerIndex: p.playerIndex,
-      })),
-      sonarWaves: this.sonarWaves.map(w => ({
-        id: w.id, x: w.x, y: w.y, startTime: w.startTime, playerIndex: w.playerIndex,
-      })),
-      visibility,
+      players,
+      projectiles,
+      // Ondes de l'équipe de l'observateur uniquement (les ondes ennemies ne
+      // doivent pas fuiter la position de l'émetteur hors-vue).
+      sonarWaves: teamWaves.map(w => ({ id: w.id, x: w.x, y: w.y, startTime: w.startTime, playerIndex: w.playerIndex })),
       zone: this.zone,
       timeLeft: Math.max(0, this.endTime - now),
-      suddenDeath: this.suddenDeath,
+      suddenDeath: sd,
     };
   }
 
-  getFullState() {
-    return { ...this.getState(), walls: this.walls, arena: this.arena };
+  getFullStateFor(observerIndex) {
+    return { ...this.getStateFor(observerIndex), walls: this.walls, arena: this.arena };
   }
 
   getDurationSeconds() {

@@ -267,8 +267,18 @@ function gameJoinedPayload(room, idx) {
     myTeam: room.players[idx].team,
     mode: publicMode(room.mode),
     players: room.players.map(p => ({ pseudo: p.pseudo, elo: p.elo, team: p.team })),
-    state: room.engine.getFullState(),
+    state: room.engine.getFullStateFor(idx),
   };
+}
+
+// Diffuse un état taillé par observateur (interest management) à chaque joueur
+// connecté. L'index moteur = position dans room.players (ordre d'addPlayer).
+function emitPerPlayer(io, room, event, fullState) {
+  room.players.forEach((p, idx) => {
+    if (!p.connected) return;
+    const sock = io.sockets.sockets.get(p.socketId);
+    if (sock) sock.emit(event, fullState ? room.engine.getFullStateFor(idx) : room.engine.getStateFor(idx));
+  });
 }
 
 function createGame(io, mode, roster) {
@@ -295,11 +305,11 @@ function createGame(io, mode, roster) {
       if (e.type === 'hit') io.to(gameId).emit(EV.PLAYER_HIT, { playerIndex: e.victim, by: e.by });
     });
     if (engine.over) { _endGame(io, room, result); return; }
-    io.to(gameId).emit(EV.GAME_STATE, engine.getState());
+    emitPerPlayer(io, room, EV.GAME_STATE, false);
   }, GAME.TICK_MS);
 
   room.fullStateInterval = setInterval(() => {
-    if (!engine.over) io.to(gameId).emit(EV.GAME_FULL_STATE, engine.getFullState());
+    if (!engine.over) emitPerPlayer(io, room, EV.GAME_FULL_STATE, true);
   }, GAME.FULL_STATE_INTERVAL_MS);
 
   return gameId;

@@ -167,7 +167,7 @@ export class GameRenderer {
     for (let i = 0; i < players.length; i++) {
       if (i === this.myPlayerIndex) continue;
       const o = players[i];
-      if (!o || o.hp <= 0) continue;
+      if (!o || o.x == null || o.hp <= 0) continue; // ennemi culé (hors-vue) : pas de collision prédite
       if (Math.hypot(x - o.x, y - o.y) < min) return true;
     }
     return false;
@@ -179,7 +179,6 @@ export class GameRenderer {
     if (buf.length === 0) return null;
     const latest = buf[buf.length - 1].state;
     const base = {
-      visibility: latest.visibility,
       sonarWaves: latest.sonarWaves,
       timeLeft: latest.timeLeft,
       suddenDeath: latest.suddenDeath,
@@ -229,6 +228,10 @@ export class GameRenderer {
     return pb.map((b, i) => {
       const a = pa[i];
       if (!a) return b;
+      // Interest management : un ennemi culé a x/y = null. Pas d'interpolation
+      // si l'une des deux bornes est nulle (apparition/disparition) → on prend
+      // l'état le plus récent (b) tel quel ; un x null = « ne pas dessiner ».
+      if (b.x == null || a.x == null) return b;
       return {
         ...b,
         x: a.x + (b.x - a.x) * f,
@@ -289,13 +292,54 @@ export class GameRenderer {
     this._rafId = requestAnimationFrame(ts2 => this._loop(ts2));
   }
 
+  // Brouillard mural reconstruit localement (le serveur n'envoie plus la grille
+  // de visibilité). Une cellule est « éclairée » si elle est dans le voisinage
+  // immédiat d'un coéquipier (3×3) ou dans la bande au front d'une de nos ondes
+  // — même géométrie que l'ancien computeVisibility serveur. Renvoie un Set de
+  // clés `row*COLS+col`, recalculé une fois par frame dans _draw.
+  _computeWallFog(s, now) {
+    const A = this.arena, S = A.CELL_SIZE;
+    const set = new Set();
+    for (const f of this._friendlies(s)) {
+      const pc = Math.floor(f.x / S), pr = Math.floor(f.y / S);
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const r = pr + dr, c = pc + dc;
+          if (r >= 0 && r < A.ROWS && c >= 0 && c < A.COLS) set.add(r * A.COLS + c);
+        }
+      }
+    }
+    if (s.sonarWaves) {
+      const lingerDist = SONAR.SPEED * (SONAR.REVEAL_LINGER_MS / 1000);
+      for (const wave of s.sonarWaves) {
+        if (s.players?.[wave.playerIndex]?.team !== this.myTeam) continue;
+        const elapsed = now - wave.startTime;
+        const front = Math.min((elapsed / 1000) * SONAR.SPEED, SONAR.MAX_RADIUS);
+        if (front <= 0) continue;
+        const inner = front - lingerDist;
+        const minC = Math.max(0, Math.floor((wave.x - front) / S));
+        const maxC = Math.min(A.COLS - 1, Math.floor((wave.x + front) / S));
+        const minR = Math.max(0, Math.floor((wave.y - front) / S));
+        const maxR = Math.min(A.ROWS - 1, Math.floor((wave.y + front) / S));
+        for (let r = minR; r <= maxR; r++) {
+          for (let c = minC; c <= maxC; c++) {
+            const cx = c * S + S / 2, cy = r * S + S / 2;
+            const dist = Math.hypot(cx - wave.x, cy - wave.y);
+            if (dist <= SONAR.MAX_RADIUS && dist <= front && dist >= inner) set.add(r * A.COLS + c);
+          }
+        }
+      }
+    }
+    return set;
+  }
+
   _isVisible(s, x, y) {
-    const vis = s.visibility?.[this.myPlayerIndex];
-    if (!vis) return true;
+    const set = this._wallFog;
+    if (!set) return true;
     const col = Math.floor(x / this.arena.CELL_SIZE);
     const row = Math.floor(y / this.arena.CELL_SIZE);
     if (col < 0 || col >= this.arena.COLS || row < 0 || row >= this.arena.ROWS) return false;
-    return vis[row * this.arena.COLS + col];
+    return set.has(row * this.arena.COLS + col);
   }
 
   _draw() {
@@ -305,6 +349,9 @@ export class GameRenderer {
 
     const s = this._sampleState();
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
+    // Brouillard mural local (remplace la grille de visibilité serveur), calculé
+    // une fois par frame et lu par _isVisible (_drawWalls).
+    this._wallFog = s ? this._computeWallFog(s, now) : null;
 
     if (s && s.suddenDeath) { this._drawSuddenDeath(ctx, s, now); return; }
 
@@ -370,7 +417,7 @@ export class GameRenderer {
     this._drawProjectiles(ctx, s);
     if (s.players) {
       s.players.forEach((p, idx) => {
-        if (!p || p.hp <= 0 || idx === this.myPlayerIndex) return;
+        if (!p || p.x == null || p.hp <= 0 || idx === this.myPlayerIndex) return;
         const isHit = (this._hitFlash[idx] || 0) > 0;
         if (isHit && Math.floor(now / 80) % 2 === 0) return;
         this._drawEntity(ctx, p, this._teamColor(p.team), now, { self: false, alpha: 1 });
@@ -493,10 +540,8 @@ export class GameRenderer {
     if (!s.projectiles) return;
     ctx.save();
     s.projectiles.forEach(p => {
-      // Les tirs de mon équipe sont toujours visibles ; ceux des ennemis
-      // seulement dans les zones révélées.
-      const friendly = s.players?.[p.playerIndex]?.team === this.myTeam;
-      if (!friendly && !s.suddenDeath && !this._isVisible(s, p.x, p.y)) return;
+      // Le serveur ne nous envoie déjà que les projectiles visibles (interest
+      // management) : on dessine tout ce qu'on reçoit.
       const color = this._teamColor(s.players?.[p.playerIndex]?.team);
       const speed = Math.hypot(p.vx, p.vy);
       if (speed > 0) {
@@ -526,7 +571,7 @@ export class GameRenderer {
     if (!s.players) return;
     const friendlies = this._friendlies(s);
     s.players.forEach((p, idx) => {
-      if (!p || p.hp <= 0 || p.team === this.myTeam) return;
+      if (!p || p.x == null || p.hp <= 0 || p.team === this.myTeam) return;
       const isHit = (this._hitFlash[idx] || 0) > 0;
       if (isHit && Math.floor(now / 80) % 2 === 0) return;
 
