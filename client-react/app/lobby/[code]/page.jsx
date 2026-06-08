@@ -63,13 +63,16 @@ export default function LobbyPage() {
   const full = lobby.members.length >= mode.totalPlayers;
   // Privé : l'hôte peut lancer en sous-effectif (1v1 / 2v1…). Public : complet requis.
   const hostCanStart = lobby.isPrivate ? lobby.canHostStart : lobby.canStart;
+  const isFFA = mode.format === 'ffa';
+  const locked = isFFA || mode.autoBalance; // pas de choix manuel d'équipe
+  const durLabel = `${Math.round((mode.durationMs || 180000) / 60000)} min`;
 
   let status;
   if (lobby.isPrivate) {
     if (!isHost) status = "En attente de l'hôte…";
     else if (full) status = 'Prêt à lancer';
-    else if (lobby.canHostStart) status = `Lançable en ${lobby.members.length}/${mode.totalPlayers} (sous-effectif possible)`;
-    else status = 'Il faut au moins un joueur par équipe';
+    else if (lobby.canHostStart) status = `Lançable à ${lobby.members.length}/${mode.totalPlayers} (sous-effectif)`;
+    else status = isFFA ? 'Il faut au moins 2 joueurs' : 'Il faut au moins 2 équipes occupées';
   } else {
     status = lobby.canStart ? 'Démarrage…' : `En attente de joueurs… (${lobby.members.length}/${mode.totalPlayers})`;
   }
@@ -78,7 +81,15 @@ export default function LobbyPage() {
     <div className="lobby-screen">
       <div className="lobby-card">
         <div className="lobby-header">
-          <span className="lobby-mode">{mode.label}</span>
+          <div className="lobby-header-l">
+            <span className="lobby-mode">{mode.label}</span>
+            <div className="lobby-meta">
+              <span className="lobby-meta-tag">{isFFA ? `MÊLÉE · ${mode.totalPlayers}J` : `${mode.teamCount}×${mode.teamSize}`}</span>
+              <span className="lobby-meta-tag">{mode.maxHp} vies</span>
+              <span className="lobby-meta-tag">{durLabel}</span>
+              {mode.borderMap && <span className="lobby-meta-tag toxic">☠ Zone toxique</span>}
+            </div>
+          </div>
           {lobby.isPrivate ? (
             <button className="lobby-code" onClick={copyCode} title="Copier le code">
               Code <b>{lobby.code}</b> <span className="lobby-copy">{copied ? '✓ copié' : '⧉'}</span>
@@ -88,40 +99,62 @@ export default function LobbyPage() {
           )}
         </div>
 
-        <div className="lobby-teams">
-          {Array.from({ length: mode.teamCount }).map((_, t) => {
-            const col = `rgb(${mode.teamColors[t]})`;
-            const members = lobby.members.filter(m => m.team === t);
-            const iAmHere = me?.team === t;
-            const teamFull = members.length >= mode.teamSize;
-            return (
-              <div key={t} className="lobby-team" style={{ borderColor: col }}>
-                <div className="lobby-team-name" style={{ color: col }}>{mode.teamNames[t]}</div>
-                {Array.from({ length: mode.teamSize }).map((_, i) => {
-                  const m = members[i];
-                  return (
-                    <div key={i} className={`lobby-slot${m ? ' filled' : ''}`} style={m ? { borderColor: col } : undefined}>
-                      {m ? (
-                        <>
-                          <span style={{ opacity: m.connected ? 1 : 0.4 }}>{m.pseudo}</span>
-                          {m.userId === user?.id && <span className="lobby-you">toi</span>}
-                          {m.userId === lobby.hostUserId && <span className="lobby-host">hôte</span>}
-                        </>
-                      ) : <span className="lobby-empty">Libre</span>}
-                    </div>
-                  );
-                })}
-                <button
-                  className="btn btn-outline lobby-join-btn"
-                  onClick={() => setTeam(t)}
-                  disabled={iAmHere || (teamFull && !iAmHere)}
-                >
-                  {iAmHere ? 'Ton équipe' : teamFull ? 'Complète' : 'Rejoindre'}
-                </button>
-              </div>
-            );
-          })}
-        </div>
+        {isFFA ? (
+          <div className="lobby-ffa">
+            {lobby.members.map(m => {
+              const col = `rgb(${mode.teamColors[m.team % mode.teamColors.length]})`;
+              return (
+                <div key={m.userId} className="lobby-slot filled" style={{ borderColor: col }}>
+                  <span style={{ opacity: m.connected ? 1 : 0.4, color: col }}>{m.pseudo}</span>
+                  {m.userId === user?.id && <span className="lobby-you">toi</span>}
+                  {m.userId === lobby.hostUserId && <span className="lobby-host">hôte</span>}
+                </div>
+              );
+            })}
+            {Array.from({ length: Math.max(0, mode.totalPlayers - lobby.members.length) }).map((_, i) => (
+              <div key={`e${i}`} className="lobby-slot"><span className="lobby-empty">Libre</span></div>
+            ))}
+          </div>
+        ) : (
+          <div className="lobby-teams">
+            {Array.from({ length: mode.teamCount }).map((_, t) => {
+              const col = `rgb(${mode.teamColors[t]})`;
+              const members = lobby.members.filter(m => m.team === t);
+              const iAmHere = me?.team === t;
+              const teamFull = members.length >= mode.teamSize;
+              return (
+                <div key={t} className="lobby-team" style={{ borderColor: col }}>
+                  <div className="lobby-team-name" style={{ color: col }}>{mode.teamNames[t]}</div>
+                  {Array.from({ length: mode.teamSize }).map((_, i) => {
+                    const m = members[i];
+                    return (
+                      <div key={i} className={`lobby-slot${m ? ' filled' : ''}`} style={m ? { borderColor: col } : undefined}>
+                        {m ? (
+                          <>
+                            <span style={{ opacity: m.connected ? 1 : 0.4 }}>{m.pseudo}</span>
+                            {m.userId === user?.id && <span className="lobby-you">toi</span>}
+                            {m.userId === lobby.hostUserId && <span className="lobby-host">hôte</span>}
+                          </>
+                        ) : <span className="lobby-empty">Libre</span>}
+                      </div>
+                    );
+                  })}
+                  {locked ? (
+                    iAmHere ? <span className="lobby-auto">Auto</span> : <span className="lobby-auto" />
+                  ) : (
+                    <button
+                      className="btn btn-outline lobby-join-btn"
+                      onClick={() => setTeam(t)}
+                      disabled={iAmHere || (teamFull && !iAmHere)}
+                    >
+                      {iAmHere ? 'Ton équipe' : teamFull ? 'Complète' : 'Rejoindre'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {error && <div className="lobby-error">{error}</div>}
 

@@ -4,12 +4,14 @@ import { useRouter } from 'next/navigation';
 import { useApp } from '../context/AppContext';
 import { EV } from '../lib/constants';
 import AuthModal from '../components/AuthModal';
+import CustomGameModal from '../components/CustomGameModal';
 
 export default function HomePage() {
   const { user, socket, socketReady, onlineCount } = useApp();
   const router = useRouter();
   const bgRef = useRef(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
   const [code, setCode] = useState('');
   const [lobbyErr, setLobbyErr] = useState('');
 
@@ -32,6 +34,11 @@ export default function HomePage() {
   const needAuth = () => { if (!user) { setShowAuth(true); return true; } return false; };
   const quickplay = () => { if (needAuth()) return; socket.current?.emit(EV.LOBBY_QUICKPLAY, { mode: 'duo', elo: user.elo || 1000 }); };
   const createPrivate = () => { if (needAuth()) return; socket.current?.emit(EV.LOBBY_CREATE, { mode: 'duo', elo: user.elo || 1000 }); };
+  const openCustom = () => { if (needAuth()) return; setShowCustom(true); };
+  const createCustom = (config) => {
+    setShowCustom(false);
+    socket.current?.emit(EV.LOBBY_CREATE, { config, elo: user.elo || 1000 });
+  };
   const joinCode = () => {
     if (needAuth()) return;
     const c = code.trim();
@@ -159,6 +166,21 @@ export default function HomePage() {
           </div>
         </div>
 
+        <button className="mode-card mode-card--custom" onClick={openCustom}>
+          <span className="mode-card-glow" aria-hidden />
+          <div className="mode-card-custom-l">
+            <div className="mode-card-head">
+              <span className="mode-card-tag">CUSTOM</span>
+              <span className="mode-badge mode-badge--private">Sur-mesure</span>
+            </div>
+            <div className="mode-card-name">Partie personnalisée</div>
+            <p className="mode-card-desc">
+              Chacun pour soi ou en équipes · effectif, durée, vies, et zone toxique qui rétrécit.
+            </p>
+          </div>
+          <span className="mode-card-cta">⚙ CONFIGURER</span>
+        </button>
+
         {lobbyErr && <div className="lobby-error home-err">{lobbyErr}</div>}
 
         <div className="home-online">
@@ -168,6 +190,7 @@ export default function HomePage() {
       </div>
 
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      {showCustom && <CustomGameModal onClose={() => setShowCustom(false)} onCreate={createCustom} />}
     </div>
   );
 }

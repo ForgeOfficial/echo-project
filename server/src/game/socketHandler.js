@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const GameEngine = require('./GameEngine');
 const { calculateElo, saveMatchResult } = require('../services/eloService');
 const { GAME, SOCKET_EVENTS: EV } = require('../../../shared/constants');
-const { MODES, getMode } = require('../../../shared/modes');
+const { MODES, getMode, buildCustomMode } = require('../../../shared/modes');
 
 // ──────────────────────────────────────────────────────────────────────────
 // État serveur, indexé par userId (et non socket.id) pour survivre aux
@@ -101,7 +101,8 @@ function setupSocketHandlers(io) {
 
     socket.on(EV.LOBBY_CREATE, (data) => {
       if (!player) { socket.emit(EV.LOBBY_ERROR, { msg: 'Non authentifié' }); return; }
-      const mode = getMode(data?.mode);
+      // Une config présente → partie personnalisée (FFA/équipes sur-mesure).
+      const mode = data?.config ? buildCustomMode(data.config) : getMode(data?.mode);
       if (!mode.usesLobby) { socket.emit(EV.LOBBY_ERROR, { msg: 'Mode invalide' }); return; }
       if (userLobby.has(player.userId)) { socket.emit(EV.LOBBY_JOINED, { code: userLobby.get(player.userId) }); return; }
       const lobby = createLobby(mode, true, player.userId);
@@ -136,6 +137,8 @@ function setupSocketHandlers(io) {
       if (!lobby) return;
       const member = lobby.members.find(m => m.userId === player.userId);
       if (!member) return;
+      // FFA ou répartition automatique verrouillée : pas de choix manuel d'équipe.
+      if (lobby.mode.format === 'ffa' || lobby.mode.autoBalance) { socket.emit(EV.LOBBY_ERROR, { msg: 'Équipes attribuées automatiquement' }); return; }
       const team = Number(data?.team);
       if (!(team >= 0 && team < lobby.mode.teamCount)) return;
       const occupancy = lobby.members.filter(m => m.team === team && m.userId !== player.userId).length;
@@ -390,8 +393,11 @@ function _cleanupRoom(room) {
 function publicMode(mode) {
   return {
     id: mode.id, label: mode.label, short: mode.short, ranked: mode.ranked,
+    format: mode.format || 'team',
     teamSize: mode.teamSize, teamCount: mode.teamCount, totalPlayers: mode.totalPlayers,
     teamNames: mode.teamNames, teamColors: mode.teamColors,
+    maxHp: mode.maxHp || 3, durationMs: mode.durationMs, borderMap: !!mode.borderMap,
+    autoBalance: !!mode.autoBalance,
   };
 }
 
@@ -428,12 +434,13 @@ function isLobbyReady(lobby) {
   return teamCounts(lobby).every(x => x === lobby.mode.teamSize);
 }
 
-// Départ anticipé réservé aux salons privés : l'hôte peut lancer dès que chaque
-// équipe a au moins un joueur (1v1, 2v1…), sans attendre que ce soit complet.
+// Départ anticipé réservé aux salons privés : l'hôte peut lancer en sous-effectif.
+// FFA : au moins 2 joueurs. Équipes : au moins 2 équipes non vides (permet 2v1…).
 function canHostStart(lobby) {
   if (!lobby.isPrivate) return false;
   if (lobby.members.length < 2) return false;
-  return teamCounts(lobby).every(x => x >= 1);
+  if (lobby.mode.format === 'ffa') return true;
+  return teamCounts(lobby).filter(x => x > 0).length >= 2;
 }
 
 function lobbySnapshot(lobby) {
@@ -483,7 +490,9 @@ function removeFromLobby(io, userId) {
 }
 
 function maybeAutoStart(io, lobby) {
-  if (lobby.isPrivate) return; // privé : départ manuel par l'hôte
+  // Public : démarre dès que complet. Privé : seulement si l'hôte a demandé
+  // l'attente de l'effectif complet (sinon départ manuel via LOBBY_START).
+  if (lobby.isPrivate && lobby.mode.waitForFull === false) return;
   if (isLobbyReady(lobby)) startLobby(io, lobby);
 }
 

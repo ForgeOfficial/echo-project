@@ -16,8 +16,11 @@ export class GameRenderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.canvas.width = ARENA.WIDTH;
-    this.canvas.height = ARENA.HEIGHT;
+    // Arène dynamique (taille selon le nb de joueurs) : valeur par défaut puis
+    // remplacée par setArena() dès qu'on connaît la partie.
+    this.arena = { CELL_SIZE: ARENA.CELL_SIZE, COLS: ARENA.COLS, ROWS: ARENA.ROWS, WIDTH: ARENA.WIDTH, HEIGHT: ARENA.HEIGHT };
+    this.canvas.width = this.arena.WIDTH;
+    this.canvas.height = this.arena.HEIGHT;
     this.myPlayerIndex = 0;
     this.myTeam = 0;
     this.teamColors = DEFAULT_TEAM_COLORS;
@@ -59,20 +62,32 @@ export class GameRenderer {
 
   _makeLayer() {
     const c = document.createElement('canvas');
-    c.width = ARENA.WIDTH;
-    c.height = ARENA.HEIGHT;
+    c.width = this.arena.WIDTH;
+    c.height = this.arena.HEIGHT;
     return { canvas: c, ctx: c.getContext('2d') };
+  }
+
+  // Adopte des dimensions d'arène (canvas + calques offscreen) si elles changent.
+  setArena(arena) {
+    if (!arena || !arena.WIDTH || !arena.HEIGHT) return;
+    if (arena.WIDTH === this.arena.WIDTH && arena.HEIGHT === this.arena.HEIGHT) return;
+    this.arena = { ...arena };
+    this.canvas.width = arena.WIDTH;
+    this.canvas.height = arena.HEIGHT;
+    this._scene = this._makeLayer();
+    this._mask = this._makeLayer();
   }
 
   start() { this._rafId = requestAnimationFrame(ts => this._loop(ts)); }
   stop() { if (this._rafId) cancelAnimationFrame(this._rafId); this._rafId = null; }
 
   setState(state) {
+    if (state.arena) this.setArena(state.arena);
     if (state.walls) {
       this._lastWalls = state.walls;
       // Index des murs pour la collision prédite (mêmes clés que le serveur).
       this._wallSetPred = new Set(
-        state.walls.map(w => `${Math.round(w.x / ARENA.CELL_SIZE)},${Math.round(w.y / ARENA.CELL_SIZE)}`)
+        state.walls.map(w => `${Math.round(w.x / this.arena.CELL_SIZE)},${Math.round(w.y / this.arena.CELL_SIZE)}`)
       );
     }
     this._buffer.push({ t: performance.now(), state });
@@ -107,8 +122,8 @@ export class GameRenderer {
 
     let nx = this._pred.x + dx * PLAYER.SPEED * dt;
     let ny = this._pred.y + dy * PLAYER.SPEED * dt;
-    nx = Math.max(PLAYER.RADIUS, Math.min(ARENA.WIDTH - PLAYER.RADIUS, nx));
-    ny = Math.max(PLAYER.RADIUS, Math.min(ARENA.HEIGHT - PLAYER.RADIUS, ny));
+    nx = Math.max(PLAYER.RADIUS, Math.min(this.arena.WIDTH - PLAYER.RADIUS, nx));
+    ny = Math.max(PLAYER.RADIUS, Math.min(this.arena.HEIGHT - PLAYER.RADIUS, ny));
     // Collision axe par axe, exactement comme le serveur (murs désactivés en mort subite).
     const useWalls = !latest.suddenDeath;
     if (!(useWalls && this._predWall(nx, this._pred.y)) && !this._predPlayer(latest, nx, this._pred.y)) this._pred.x = nx;
@@ -130,7 +145,7 @@ export class GameRenderer {
   _predWall(x, y) {
     const set = this._wallSetPred;
     if (!set || set.size === 0) return false;
-    const S = ARENA.CELL_SIZE, R = PLAYER.RADIUS;
+    const S = this.arena.CELL_SIZE, R = PLAYER.RADIUS;
     const minC = Math.floor((x - R) / S), maxC = Math.floor((x + R) / S);
     const minR = Math.floor((y - R) / S), maxR = Math.floor((y + R) / S);
     for (let r = minR; r <= maxR; r++) {
@@ -168,6 +183,7 @@ export class GameRenderer {
       sonarWaves: latest.sonarWaves,
       timeLeft: latest.timeLeft,
       suddenDeath: latest.suddenDeath,
+      zone: latest.zone,
       walls: this._lastWalls,
     };
     let players, projectiles;
@@ -240,8 +256,8 @@ export class GameRenderer {
     const last = this._buffer[this._buffer.length - 1]?.state;
     const wp = last?.players?.find(p => p.team === winnerTeam && p.hp > 0)
       || last?.players?.find(p => p.team === winnerTeam);
-    const x = wp?.x ?? ARENA.WIDTH / 2;
-    const y = wp?.y ?? ARENA.HEIGHT / 2;
+    const x = wp?.x ?? this.arena.WIDTH / 2;
+    const y = wp?.y ?? this.arena.HEIGHT / 2;
     this._celebration = { winnerTeam, x, y, start: Date.now() };
     this._lastCelebTs = Date.now();
     const color = this._teamColor(winnerTeam);
@@ -276,10 +292,10 @@ export class GameRenderer {
   _isVisible(s, x, y) {
     const vis = s.visibility?.[this.myPlayerIndex];
     if (!vis) return true;
-    const col = Math.floor(x / ARENA.CELL_SIZE);
-    const row = Math.floor(y / ARENA.CELL_SIZE);
-    if (col < 0 || col >= ARENA.COLS || row < 0 || row >= ARENA.ROWS) return false;
-    return vis[row * ARENA.COLS + col];
+    const col = Math.floor(x / this.arena.CELL_SIZE);
+    const row = Math.floor(y / this.arena.CELL_SIZE);
+    if (col < 0 || col >= this.arena.COLS || row < 0 || row >= this.arena.ROWS) return false;
+    return vis[row * this.arena.COLS + col];
   }
 
   _draw() {
@@ -288,7 +304,7 @@ export class GameRenderer {
     if (this._celebration) { this._drawCelebration(ctx, now); return; }
 
     const s = this._sampleState();
-    const W = ARENA.WIDTH, H = ARENA.HEIGHT;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
 
     if (s && s.suddenDeath) { this._drawSuddenDeath(ctx, s, now); return; }
 
@@ -313,22 +329,26 @@ export class GameRenderer {
     sctx.restore();
     ctx.drawImage(this._scene.canvas, 0, 0);
 
-    // ——— 3. Éléments nets par-dessus le fog ———
+    // ——— 3. Zone toxique (gaz) derrière les entités ———
+    if (s.zone) this._drawZone(ctx, s, now);
+
+    // ——— 4. Éléments nets par-dessus le fog ———
     this._drawSonarWaves(ctx, s, now);
     this._drawProjectiles(ctx, s);
     this._drawEnemies(ctx, s, now);
     this._drawTeammates(ctx, s, now);
     this._drawSelf(ctx, s, now);
 
-    // ——— 4. Cadre + vignette ———
+    // ——— 5. Cadre + vignette + alerte gaz ———
     this._drawFrame(now);
     this._drawVignette();
+    if (s.zone) this._drawGasWarning(ctx, s, now);
   }
 
   // Mort subite : arène entièrement claire, sans murs ni brouillard, teinte
   // rouge de tension. Tous les joueurs sont pleinement visibles.
   _drawSuddenDeath(ctx, s, now) {
-    const W = ARENA.WIDTH, H = ARENA.HEIGHT;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 400);
     const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
     bg.addColorStop(0, '#1a0810');
@@ -339,10 +359,10 @@ export class GameRenderer {
     ctx.save();
     ctx.strokeStyle = `rgba(255,60,80,${0.05 + 0.03 * pulse})`;
     ctx.lineWidth = 1;
-    for (let x = ARENA.CELL_SIZE; x < W; x += ARENA.CELL_SIZE) {
+    for (let x = this.arena.CELL_SIZE; x < W; x += this.arena.CELL_SIZE) {
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
     }
-    for (let y = ARENA.CELL_SIZE; y < H; y += ARENA.CELL_SIZE) {
+    for (let y = this.arena.CELL_SIZE; y < H; y += this.arena.CELL_SIZE) {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     }
     ctx.restore();
@@ -374,11 +394,11 @@ export class GameRenderer {
     ctx.save();
     ctx.strokeStyle = `rgba(0,255,255,${pulse})`;
     ctx.lineWidth = 1;
-    for (let x = ARENA.CELL_SIZE; x < ARENA.WIDTH; x += ARENA.CELL_SIZE) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ARENA.HEIGHT); ctx.stroke();
+    for (let x = this.arena.CELL_SIZE; x < this.arena.WIDTH; x += this.arena.CELL_SIZE) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, this.arena.HEIGHT); ctx.stroke();
     }
-    for (let y = ARENA.CELL_SIZE; y < ARENA.HEIGHT; y += ARENA.CELL_SIZE) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(ARENA.WIDTH, y); ctx.stroke();
+    for (let y = this.arena.CELL_SIZE; y < this.arena.HEIGHT; y += this.arena.CELL_SIZE) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(this.arena.WIDTH, y); ctx.stroke();
     }
     ctx.restore();
   }
@@ -387,7 +407,7 @@ export class GameRenderer {
   // feutrés au front des ondes de mon équipe.
   _buildMask(s, now) {
     const mctx = this._mask.ctx;
-    mctx.clearRect(0, 0, ARENA.WIDTH, ARENA.HEIGHT);
+    mctx.clearRect(0, 0, this.arena.WIDTH, this.arena.HEIGHT);
 
     for (const f of this._friendlies(s)) {
       const auraR = 95;
@@ -425,8 +445,8 @@ export class GameRenderer {
     if (!s.walls) return;
     const R = 6;
     s.walls.forEach(w => {
-      if (!this._isVisible(s, w.x + ARENA.CELL_SIZE / 2, w.y + ARENA.CELL_SIZE / 2)) return;
-      const x = w.x + 3, y = w.y + 3, sz = ARENA.CELL_SIZE - 6;
+      if (!this._isVisible(s, w.x + this.arena.CELL_SIZE / 2, w.y + this.arena.CELL_SIZE / 2)) return;
+      const x = w.x + 3, y = w.y + 3, sz = this.arena.CELL_SIZE - 6;
       const g = ctx.createLinearGradient(x, y, x, y + sz);
       g.addColorStop(0, '#123047');
       g.addColorStop(1, '#0a1c2c');
@@ -637,7 +657,7 @@ export class GameRenderer {
   _drawCelebration(ctx, now) {
     const c = this._celebration;
     const el = now - c.start;
-    const W = ARENA.WIDTH, H = ARENA.HEIGHT;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const color = this._teamColor(c.winnerTeam);
     const flash = Math.max(0, 1 - el / 700);
 
@@ -722,7 +742,7 @@ export class GameRenderer {
 
   _drawFrame(now) {
     const ctx = this.ctx;
-    const W = ARENA.WIDTH, H = ARENA.HEIGHT;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.2 * Math.sin(now / 1000);
     ctx.save();
     ctx.strokeStyle = `rgba(0,255,255,${pulse})`;
@@ -748,12 +768,66 @@ export class GameRenderer {
 
   _drawVignette() {
     const ctx = this.ctx;
-    const W = ARENA.WIDTH, H = ARENA.HEIGHT;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.7);
     g.addColorStop(0, 'rgba(0,0,0,0)');
     g.addColorStop(1, 'rgba(0,0,0,0.55)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
+  }
+
+  // Zone toxique : bandes de gaz acide autour du rectangle sûr + bord animé.
+  _drawZone(ctx, s, now) {
+    const z = s.zone;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 350);
+    ctx.save();
+    ctx.fillStyle = `rgba(150,255,50,${0.10 + 0.07 * pulse})`;
+    ctx.fillRect(0, 0, W, z.y);                              // haut
+    ctx.fillRect(0, z.y + z.h, W, H - (z.y + z.h));          // bas
+    ctx.fillRect(0, z.y, z.x, z.h);                          // gauche
+    ctx.fillRect(z.x + z.w, z.y, W - (z.x + z.w), z.h);      // droite
+
+    // Bord du sanctuaire : pointillés défilants, lumineux.
+    ctx.strokeStyle = `rgba(185,255,90,${0.6 + 0.3 * pulse})`;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = 'rgba(150,255,50,0.9)';
+    ctx.shadowBlur = 16;
+    ctx.setLineDash([14, 10]);
+    ctx.lineDashOffset = -((now / 40) % 24);
+    ctx.strokeRect(z.x, z.y, z.w, z.h);
+    ctx.restore();
+  }
+
+  // Alerte plein écran quand MON joueur est dans le gaz (visible uniquement par lui).
+  _drawGasWarning(ctx, s, now) {
+    const me = s.players?.[this.myPlayerIndex];
+    if (!me || me.hp <= 0) return;
+    const z = s.zone;
+    if (me.x >= z.x && me.x <= z.x + z.w && me.y >= z.y && me.y <= z.y + z.h) return;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 170);
+    ctx.save();
+    const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.18, W / 2, H / 2, W * 0.72);
+    g.addColorStop(0, 'rgba(120,255,40,0)');
+    g.addColorStop(1, `rgba(150,255,40,${0.22 + 0.2 * pulse})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = `rgba(255,45,45,${0.5 + 0.35 * pulse})`;
+    ctx.lineWidth = 6;
+    ctx.shadowColor = 'rgba(255,45,45,0.85)';
+    ctx.shadowBlur = 22;
+    ctx.strokeRect(3, 3, W - 6, H - 6);
+
+    ctx.shadowColor = 'rgba(190,255,70,0.9)';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = `rgba(205,255,95,${0.82 + 0.18 * pulse})`;
+    ctx.font = '900 26px Orbitron, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('☠ ZONE TOXIQUE — REVIENS', W / 2, 38);
+    ctx.restore();
   }
 
   _roundRect(ctx, x, y, w, h, r) {

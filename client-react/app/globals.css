@@ -481,6 +481,96 @@ body::after {
 }
 @keyframes home-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
+/* —— Carte "Partie personnalisée" (pleine largeur) —— */
+.mode-card--custom {
+  width: 100%; margin-top: 1rem;
+  flex-direction: row; align-items: center; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+  border-color: rgba(150,110,255,0.35);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(150,110,255,0.12), transparent 55%),
+    linear-gradient(160deg, rgba(12,10,28,0.95), rgba(4,4,16,0.95));
+}
+.mode-card--custom:hover { border-color: #9c7bff; box-shadow: 0 12px 44px rgba(0,0,0,0.5), 0 0 26px rgba(150,110,255,0.3); transform: translateY(-3px); }
+.mode-card--custom:hover::after { background: linear-gradient(135deg, rgba(150,110,255,0.14), transparent 55%); opacity: 1; }
+.mode-card-custom-l { flex: 1; min-width: 220px; }
+.mode-card--custom .mode-card-tag { color: #b39bff; }
+.mode-card--custom .mode-card-cta { margin-top: 0; color: #b39bff; border-color: #9c7bff; }
+.mode-card--custom:hover .mode-card-cta { background: rgba(150,110,255,0.14); box-shadow: 0 0 20px rgba(150,110,255,0.4); }
+
+/* ═══════════════ HUD scoreboard (FFA / 3+ équipes) ═══════════════ */
+.hud-member.dead { opacity: 0.4; filter: grayscale(0.6); }
+.hud-scoreboard { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 1; align-items: center; }
+.hud-chip {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.2rem 0.55rem; border: 1px solid var(--border); border-radius: 99px;
+  background: rgba(255,255,255,0.03);
+}
+.hud-chip.me { background: rgba(0,255,255,0.08); box-shadow: 0 0 10px rgba(0,255,255,0.15); }
+.hud-chip.dead { opacity: 0.35; filter: grayscale(0.7); }
+.hud-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.hud-chip-name { font-family: var(--font-display); font-size: 0.62rem; letter-spacing: 0.05em; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ═══════════════ Lobby : méta + FFA ═══════════════ */
+.lobby-header-l { display: flex; flex-direction: column; gap: 0.4rem; }
+.lobby-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.lobby-meta-tag {
+  font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-dim); border: 1px solid var(--border); border-radius: 99px;
+  padding: 2px 8px;
+}
+.lobby-meta-tag.toxic { color: #b9ff52; border-color: rgba(150,255,50,0.5); }
+.lobby-ffa { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; }
+.lobby-ffa .lobby-slot { min-height: 44px; }
+.lobby-auto { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; min-height: 1.2em; margin-top: 0.25rem; }
+
+/* ═══════════════ Modal partie personnalisée ═══════════════ */
+.cg-box {
+  position: relative; background: var(--bg2);
+  border: 1px solid var(--border-bright);
+  border-radius: 14px; padding: 1.75rem;
+  width: 440px; max-width: 95vw; max-height: 92vh; overflow-y: auto;
+  box-shadow: var(--glow-cyan);
+  display: flex; flex-direction: column; gap: 1rem;
+}
+.cg-title { font-family: var(--font-display); color: var(--cyan); letter-spacing: 0.1em; font-size: 1.05rem; }
+.cg-seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cg-seg button {
+  flex: 1; background: transparent; border: none; cursor: pointer;
+  color: var(--text-dim); font-family: var(--font-mono); font-size: 0.8rem;
+  letter-spacing: 0.06em; padding: 0.6rem 0.5rem; transition: all 0.18s;
+}
+.cg-seg button + button { border-left: 1px solid var(--border); }
+.cg-seg button.active { background: rgba(0,255,255,0.12); color: var(--cyan); text-shadow: 0 0 10px var(--cyan); }
+.cg-seg.sm button { font-size: 0.72rem; padding: 0.45rem 0.3rem; }
+.cg-row2 { display: flex; gap: 1rem; }
+.cg-row2 > .cg-field { flex: 1; }
+.cg-field { display: flex; flex-direction: column; gap: 0.5rem; }
+.cg-field-label { font-size: 0.74rem; color: var(--text); letter-spacing: 0.04em; display: flex; flex-direction: column; }
+.cg-hint { color: var(--text-dim); font-size: 0.64rem; margin-top: 2px; }
+.cg-stepper { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.cg-stepper button {
+  width: 38px; height: 38px; background: rgba(255,255,255,0.04); border: none; cursor: pointer;
+  color: var(--cyan); font-size: 1.2rem; line-height: 1; transition: background 0.15s;
+}
+.cg-stepper button:hover:not(:disabled) { background: rgba(0,255,255,0.12); }
+.cg-stepper button:disabled { opacity: 0.3; cursor: not-allowed; }
+.cg-stepper-val { min-width: 46px; text-align: center; font-family: var(--font-display); font-size: 1.05rem; color: var(--text); }
+.cg-total { font-size: 0.75rem; color: var(--text-dim); text-align: center; letter-spacing: 0.04em; }
+.cg-total.err { color: var(--warn); }
+.cg-opts { display: flex; flex-direction: column; gap: 0.6rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.cg-toggle { display: flex; align-items: center; gap: 0.7rem; background: none; border: none; cursor: pointer; text-align: left; padding: 0; }
+.cg-toggle-track {
+  width: 40px; height: 22px; border-radius: 99px; flex-shrink: 0;
+  background: rgba(255,255,255,0.1); border: 1px solid var(--border);
+  position: relative; transition: background 0.18s, border-color 0.18s;
+}
+.cg-toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-dim); transition: transform 0.18s, background 0.18s; }
+.cg-toggle.on .cg-toggle-track { background: rgba(0,255,255,0.2); border-color: var(--cyan); }
+.cg-toggle.on .cg-toggle-knob { transform: translateX(18px); background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+.cg-toggle-text { font-size: 0.78rem; color: var(--text); display: flex; flex-direction: column; }
+.cg-create { margin-top: 0.5rem; width: 100%; }
+
 /* ——— END SCREEN ——— */
 .end-screen {
   display: flex; align-items: center; justify-content: center;

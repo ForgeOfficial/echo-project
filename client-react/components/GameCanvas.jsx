@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { GameRenderer } from '../lib/renderer';
 import { EV, ARENA, PLAYER, PROJECTILE, SONAR } from '../lib/constants';
+import { arenaForPlayers } from '../lib/modes';
 import { audio } from '../lib/audio';
 import TouchControls from './TouchControls';
 
@@ -17,8 +18,11 @@ export default function GameCanvas({ matchData, initialState }) {
   const wallsRef = useRef(null);
   const stageRef = useRef(null);
   const dmgRef = useRef(null);
-  const [hudState, setHudState] = useState({ players: [], timeLeft: ARENA.MAX_DURATION_MS ?? 180000, matchInfo: null });
+  const [hudState, setHudState] = useState({ players: [], timeLeft: matchData?.mode?.durationMs ?? 180000, matchInfo: null });
   const audioUnlockedRef = useRef(false);
+
+  // Arène dimensionnée selon le nombre de joueurs (même formule que le serveur).
+  const arena = arenaForPlayers(matchData?.mode?.totalPlayers || 2);
 
   // Retour de dégâts quand JE prends un coup : flash rouge + secousse + son
   const playDamageFx = useCallback(() => {
@@ -113,6 +117,7 @@ export default function GameCanvas({ matchData, initialState }) {
     // Prédiction locale : le renderer lit l'état d'entrée courant (clavier + tactile)
     // pour simuler mon déplacement sans attendre l'aller-retour réseau.
     renderer.enablePrediction(buildInputs);
+    renderer.setArena(arena); // dimensionnement immédiat (avant le 1er état serveur)
     rendererRef.current = renderer;
     // État initial fourni par JOIN_GAME (murs + positions) : évite d'attendre
     // le prochain full-state pour afficher l'arène, y compris en reconnexion.
@@ -194,7 +199,7 @@ export default function GameCanvas({ matchData, initialState }) {
   // (évite que l'arène déborde sous le fold → fausse impression de "sortie de map")
   const [scale, setScale] = useState(1);
   useEffect(() => {
-    const STAGE_W = 800, STAGE_H = 656; // canvas 600 + HUD ~56
+    const STAGE_W = arena.WIDTH, STAGE_H = arena.HEIGHT + 56; // canvas + HUD ~56
     const recompute = () => {
       // En tactile, le jeu passe en plein écran (navbar masquée) et les
       // contrôles flottent par-dessus → on exploite presque toute la surface.
@@ -209,7 +214,7 @@ export default function GameCanvas({ matchData, initialState }) {
       window.removeEventListener('resize', recompute);
       window.removeEventListener('orientationchange', recompute);
     };
-  }, [isTouch]);
+  }, [isTouch, arena.WIDTH, arena.HEIGHT]);
 
   const { players, timeLeft, matchInfo, suddenDeath } = hudState;
   const info = matchInfo || matchData;
@@ -218,6 +223,9 @@ export default function GameCanvas({ matchData, initialState }) {
   const teamColors = mode?.teamColors ?? ['0,255,255', '255,0,255'];
   const teamNames = mode?.teamNames ?? ['Cyan', 'Magenta'];
   const teamSize = mode?.teamSize ?? 1;
+  const teamCount = mode?.teamCount ?? 2;
+  const maxHp = mode?.maxHp ?? PLAYER.MAX_HP;
+  const manyTeams = teamCount > 2; // FFA / 3+ équipes → HUD compact en bandeau
   const timeWarning = timeLeft < 30000;
 
   const formatTime = (ms) => {
@@ -226,19 +234,46 @@ export default function GameCanvas({ matchData, initialState }) {
   };
 
   const renderMember = (m) => {
-    const hp = players[m.idx]?.hp ?? PLAYER.MAX_HP;
+    const hp = players[m.idx]?.hp ?? maxHp;
     const col = `rgb(${teamColors[m.team] ?? teamColors[0]})`;
     return (
-      <div key={m.idx} className="hud-member">
+      <div key={m.idx} className={`hud-member${hp <= 0 ? ' dead' : ''}`}>
         <span className="hud-name" style={{ color: col }}>{m.pseudo ?? 'Joueur'}</span>
         <div className="hud-hp">
-          {Array.from({ length: PLAYER.MAX_HP }).map((_, i) => (
+          {Array.from({ length: maxHp }).map((_, i) => (
             <span key={i} className="hp-dot" style={i < hp
               ? { background: col, border: `1px solid ${col}`, boxShadow: `0 0 8px ${col}` }
               : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
           ))}
         </div>
-        {teamSize === 1 && m.elo != null && <span className="hud-elo-badge">{m.elo}</span>}
+        {teamSize === 1 && !manyTeams && m.elo != null && <span className="hud-elo-badge">{m.elo}</span>}
+      </div>
+    );
+  };
+
+  // HUD compact pour FFA / 3+ équipes : tous les joueurs en bandeau, le mien en tête.
+  const scoreboard = () => {
+    const all = roster.map((p, idx) => ({ ...p, idx }));
+    all.sort((a, b) => (a.idx === myIdxRef.current ? -1 : b.idx === myIdxRef.current ? 1 : 0));
+    return (
+      <div className="hud-scoreboard">
+        {all.map(m => {
+          const hp = players[m.idx]?.hp ?? maxHp;
+          const col = `rgb(${teamColors[m.team] ?? teamColors[0]})`;
+          return (
+            <div key={m.idx} className={`hud-chip${hp <= 0 ? ' dead' : ''}${m.idx === myIdxRef.current ? ' me' : ''}`} style={{ borderColor: col }}>
+              <span className="hud-chip-dot" style={{ background: col, boxShadow: `0 0 8px ${col}` }} />
+              <span className="hud-chip-name" style={{ color: col }}>{m.pseudo ?? `J${m.idx + 1}`}</span>
+              <div className="hud-hp">
+                {Array.from({ length: maxHp }).map((_, i) => (
+                  <span key={i} className="hp-dot" style={i < hp
+                    ? { background: col, border: `1px solid ${col}`, boxShadow: `0 0 6px ${col}` }
+                    : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -260,13 +295,24 @@ export default function GameCanvas({ matchData, initialState }) {
     <div className={`game-shell${isTouch ? ' touch' : ''}`}>
       {/* scale sur le wrapper externe, shake sur .game-stage (ne se gênent pas) */}
       <div className="game-scaler" style={{ transform: `scale(${scale})` }}>
-      <div className="game-stage" ref={stageRef}>
-        <div className="game-hud">
-          {teamPanel(0, 'left')}
-          <div className="hud-timer" style={{ color: suddenDeath ? '#FF3C50' : (timeWarning ? 'var(--warn)' : 'var(--text)') }}>
-            {suddenDeath ? '☠ SUBITE' : formatTime(timeLeft)}
-          </div>
-          {teamPanel(1, 'right')}
+      <div className="game-stage" ref={stageRef} style={{ width: arena.WIDTH }}>
+        <div className="game-hud" style={{ width: arena.WIDTH }}>
+          {manyTeams ? (
+            <>
+              {scoreboard()}
+              <div className="hud-timer" style={{ color: timeWarning ? 'var(--warn)' : 'var(--text)' }}>
+                {formatTime(timeLeft)}
+              </div>
+            </>
+          ) : (
+            <>
+              {teamPanel(0, 'left')}
+              <div className="hud-timer" style={{ color: suddenDeath ? '#FF3C50' : (timeWarning ? 'var(--warn)' : 'var(--text)') }}>
+                {suddenDeath ? '☠ SUBITE' : formatTime(timeLeft)}
+              </div>
+              {teamPanel(1, 'right')}
+            </>
+          )}
         </div>
         <div style={{ position: 'relative' }}>
           <canvas ref={canvasRef} className="game-canvas" />
