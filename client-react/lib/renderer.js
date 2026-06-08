@@ -29,6 +29,7 @@ export class GameRenderer {
     this._hitFlash = [];
     this._hitReveals = [];   // marqueurs « tu as touché ici » (cibles hors-vue)
     this._nukeFx = null;     // flash plein écran d'une nuke
+    this._localShots = [];   // tirs prédits localement (sortent du canon sans attendre le serveur)
     this._lastWalls = null;
 
     // Interpolation : on bufferise les snapshots serveur et on rend avec un
@@ -272,6 +273,74 @@ export class GameRenderer {
 
   triggerNuke(x, y) { this._nukeFx = { x, y, start: Date.now() }; }
 
+  // Tir prédit localement : la (ou les, en rafale) balle part immédiatement du
+  // bout du canon PRÉDIT (donc aligné sur le vaisseau affiché), sans attendre
+  // l'aller-retour serveur. Purement visuel — les dégâts restent côté serveur.
+  // Le ghost vit ~220ms (fondu en fin de vie), le temps que le projectile
+  // serveur prenne le relais dans le flux interpolé.
+  predictShot() {
+    if (!this._pred) return;
+    const me = this._buffer[this._buffer.length - 1]?.state?.players?.[this.myPlayerIndex];
+    if (!me || me.hp <= 0) return;
+    const burst = !!me.fx?.burst;
+    const angle = this._pred.angle || 0;
+    const mx = this._pred.x + Math.cos(angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
+    const my = this._pred.y + Math.sin(angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
+    const spread = burst ? [0, -0.22, 0.22] : [0];
+    for (const da of spread) {
+      const a = angle + da;
+      this._localShots.push({ x: mx, y: my, vx: Math.cos(a) * PROJECTILE.SPEED, vy: Math.sin(a) * PROJECTILE.SPEED, born: performance.now() });
+    }
+  }
+
+  _advanceLocalShots(dtMs) {
+    if (!this._localShots.length) return;
+    const dt = Math.min(dtMs, 50) / 1000;
+    const now = performance.now();
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT;
+    this._localShots = this._localShots.filter(s => {
+      s.x += s.vx * dt; s.y += s.vy * dt;
+      if (now - s.born > 220) return false;            // relais pris par le serveur
+      if (s.x < 0 || s.x > W || s.y < 0 || s.y > H) return false;
+      return !this._shotHitsWall(s.x, s.y);
+    });
+  }
+
+  _shotHitsWall(x, y) {
+    const set = this._wallSetPred;
+    if (!set || !set.size) return false;
+    const S = this.arena.CELL_SIZE, c = Math.floor(x / S), r = Math.floor(y / S);
+    if (!set.has(`${c},${r}`)) return false;
+    const x0 = c * S + WALL.PAD, x1 = c * S + S - WALL.PAD;
+    const y0 = r * S + WALL.PAD, y1 = r * S + S - WALL.PAD;
+    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+  }
+
+  _drawLocalShots(ctx) {
+    if (!this._localShots.length) return;
+    const now = performance.now();
+    const color = this._teamColor(this.myTeam);
+    ctx.save();
+    for (const s of this._localShots) {
+      const a = Math.max(0, 1 - (now - s.born) / 220);
+      const speed = Math.hypot(s.vx, s.vy);
+      if (speed > 0) {
+        const tx = s.x - (s.vx / speed) * 18, ty = s.y - (s.vy / speed) * 18;
+        const tg = ctx.createLinearGradient(s.x, s.y, tx, ty);
+        tg.addColorStop(0, `rgba(${color},${0.6 * a})`);
+        tg.addColorStop(1, `rgba(${color},0)`);
+        ctx.strokeStyle = tg; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tx, ty); ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, PROJECTILE.RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.shadowColor = `rgba(${color},${a})`; ctx.shadowBlur = 16;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   // Lance la célébration de l'équipe gagnante (à la dernière position connue
   // d'un de ses joueurs).
   startCelebration(winnerTeam) {
@@ -307,6 +376,7 @@ export class GameRenderer {
       this._hitFlash[i] = Math.max(0, (this._hitFlash[i] || 0) - dt);
     }
     this._stepPrediction(dt);
+    this._advanceLocalShots(dt);
     this._draw();
     this._rafId = requestAnimationFrame(ts2 => this._loop(ts2));
   }
@@ -319,12 +389,19 @@ export class GameRenderer {
   _computeWallFog(s, now) {
     const A = this.arena, S = A.CELL_SIZE;
     const set = new Set();
+    // Révélation des murs en DISQUE autour de chaque coéquipier (un peu plus
+    // loin que l'ancien 3×3) pour mieux voir les blocs collés à soi sans tout
+    // dévoiler. Le rayon reste sous le halo de lumière (cf. _buildMask).
+    const REVEAL_R = S * 2;
+    const reach = Math.ceil(REVEAL_R / S);
     for (const f of this._friendlies(s)) {
       const pc = Math.floor(f.x / S), pr = Math.floor(f.y / S);
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
+      for (let dr = -reach; dr <= reach; dr++) {
+        for (let dc = -reach; dc <= reach; dc++) {
           const r = pr + dr, c = pc + dc;
-          if (r >= 0 && r < A.ROWS && c >= 0 && c < A.COLS) set.add(r * A.COLS + c);
+          if (r < 0 || r >= A.ROWS || c < 0 || c >= A.COLS) continue;
+          const cx = c * S + S / 2, cy = r * S + S / 2;
+          if (Math.hypot(cx - f.x, cy - f.y) <= REVEAL_R) set.add(r * A.COLS + c);
         }
       }
     }
@@ -402,6 +479,7 @@ export class GameRenderer {
     this._drawBonuses(ctx, s, now);
     this._drawSonarWaves(ctx, s, now);
     this._drawProjectiles(ctx, s);
+    this._drawLocalShots(ctx);
     this._drawEnemies(ctx, s, now);
     this._drawTeammates(ctx, s, now);
     this._drawSelf(ctx, s, now);
@@ -437,6 +515,7 @@ export class GameRenderer {
     ctx.restore();
 
     this._drawProjectiles(ctx, s);
+    this._drawLocalShots(ctx);
     if (s.players) {
       s.players.forEach((p, idx) => {
         if (!p || p.x == null || p.hp <= 0 || idx === this.myPlayerIndex) return;
@@ -480,10 +559,13 @@ export class GameRenderer {
     mctx.clearRect(0, 0, this.arena.WIDTH, this.arena.HEIGHT);
 
     for (const f of this._friendlies(s)) {
-      const auraR = 95;
+      // Halo légèrement étendu + palier plus tenu pour que les blocs proches
+      // (révélés jusqu'à ~2 cases, cf. _computeWallFog) soient assez éclairés.
+      const auraR = 108;
       const g = mctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, auraR);
       g.addColorStop(0, 'rgba(255,255,255,0.95)');
-      g.addColorStop(0.55, 'rgba(255,255,255,0.45)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.6)');
+      g.addColorStop(0.8, 'rgba(255,255,255,0.38)');
       g.addColorStop(1, 'rgba(255,255,255,0)');
       mctx.fillStyle = g;
       mctx.beginPath(); mctx.arc(f.x, f.y, auraR, 0, Math.PI * 2); mctx.fill();

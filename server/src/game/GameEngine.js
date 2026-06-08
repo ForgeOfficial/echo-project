@@ -197,13 +197,17 @@ class GameEngine {
     p.lastShotTime = now;
     this.stats[playerIndex].shots++;
     const spread = burst ? [0, -0.22, 0.22] : [0];
+    // Les 3 balles partent du MÊME point (le bout du canon, dans l'axe du joueur)
+    // et ne diffèrent que par leur direction → éventail propre depuis la proue.
+    const muzzleX = p.x + Math.cos(p.angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
+    const muzzleY = p.y + Math.sin(p.angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
     let first = null;
     for (const da of spread) {
       const ang = p.angle + da;
       const proj = {
         id: this._projIdSeq++,
-        x: p.x + Math.cos(ang) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2),
-        y: p.y + Math.sin(ang) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2),
+        x: muzzleX,
+        y: muzzleY,
         vx: Math.cos(ang) * PROJECTILE.SPEED,
         vy: Math.sin(ang) * PROJECTILE.SPEED,
         playerIndex,

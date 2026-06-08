@@ -104,6 +104,7 @@ export default function GameCanvas({ matchData, initialState }) {
     if (now - lastShootRef.current < cd) return;
     lastShootRef.current = now;
     socket.current?.emit(EV.PLAYER_SHOOT);
+    rendererRef.current?.predictShot();   // balle visible immédiatement, depuis le canon
     if (audioUnlockedRef.current) audio.shoot();
   }, [socket]);
   const handleTouchShoot = tryShoot;
