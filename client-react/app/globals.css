@@ -697,6 +697,9 @@ body::after {
   box-shadow: var(--glow-cyan);
   display: flex; flex-direction: column; gap: 1rem;
 }
+/* Sans ça, le flex column écrase les sections quand le contenu dépasse la
+   hauteur max au lieu de laisser le conteneur scroller. */
+.cg-box > * { flex-shrink: 0; }
 .cg-title { font-family: var(--font-display); color: var(--cyan); letter-spacing: 0.1em; font-size: 1.05rem; }
 .cg-seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .cg-seg button {

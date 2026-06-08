@@ -191,6 +191,7 @@ export class GameRenderer {
       timeLeft: latest.timeLeft,
       suddenDeath: latest.suddenDeath,
       zone: latest.zone,
+      bonuses: latest.bonuses,
       walls: this._lastWalls,
     };
     let players, projectiles;
