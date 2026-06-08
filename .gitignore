@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Env / secrets
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Builds
+.next/
+dist/
+build/
+
+# Bases de données (jamais en repo)
+*.db
+*.db-journal
+*.sqlite
+
+# Logs & divers
+*.log
+.DS_Store

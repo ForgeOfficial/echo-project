@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int            @id @default(autoincrement())
+  pseudo       String         @unique
+  pseudoLower  String         @unique
+  passwordHash String
+  elo          Int            @default(1000)
+  wins         Int            @default(0)
+  losses       Int            @default(0)
+  draws        Int            @default(0)
+  createdAt    DateTime       @default(now())
+  matchesAs1   Match[]        @relation("Player1")
+  matchesAs2   Match[]        @relation("Player2")
+  refreshTokens RefreshToken[]
+}
+
+model Match {
+  id              Int      @id @default(autoincrement())
+  player1Id       Int
+  player2Id       Int
+  winnerId        Int?
+  player1HpLeft   Int
+  player2HpLeft   Int
+  durationSeconds Int
+  player1EloDelta Int
+  player2EloDelta Int
+  player1Pings    Int
+  player2Pings    Int
+  player1Shots    Int
+  player2Shots    Int
+  player1Hits     Int
+  player2Hits     Int
+  createdAt       DateTime @default(now())
+  player1         User     @relation("Player1", fields: [player1Id], references: [id])
+  player2         User     @relation("Player2", fields: [player2Id], references: [id])
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
