@@ -3,18 +3,25 @@ const crypto = require('crypto');
 const GameEngine = require('./GameEngine');
 const { calculateElo, saveMatchResult } = require('../services/eloService');
 const { GAME, SOCKET_EVENTS: EV } = require('../../../shared/constants');
+const { MODES, getMode } = require('../../../shared/modes');
 
 // ──────────────────────────────────────────────────────────────────────────
-// État serveur. Tout est indexé par userId (et non socket.id) : un joueur garde
-// son identité à travers les reconnexions (fermeture/réouverture de page, où le
-// socket.id change). Une partie = une "room" identifiée par un UUID stable.
+// État serveur, indexé par userId (et non socket.id) pour survivre aux
+// reconnexions. Une partie = une "room" identifiée par un UUID stable. Les
+// modes en équipe passent par un salon (lobby) avant la partie.
 // ──────────────────────────────────────────────────────────────────────────
-const queue = [];                 // joueurs en attente d'adversaire
+const queue = [];                 // file du matchmaking classique (1v1)
 const rooms = new Map();          // gameId -> room (partie en cours)
-const userActiveGame = new Map(); // userId -> gameId (partie live à laquelle il appartient)
-const finishedGames = new Map();  // gameId -> { resultByUserId: Map<userId, payload>, timer }
-const socketToUser = new Map();   // socket.id -> userId (résolu depuis le JWT)
-const abandonTimers = new Map();  // userId -> timeout de grâce après déconnexion
+const userActiveGame = new Map(); // userId -> gameId (partie live)
+const finishedGames = new Map();  // gameId -> { resultByUserId, timer }
+const socketToUser = new Map();   // socket.id -> userId
+const abandonTimers = new Map();  // userId -> timeout de grâce (en partie)
+
+const lobbies = new Map();        // code -> lobby
+const userLobby = new Map();      // userId -> code
+const lobbyTimers = new Map();    // userId -> timeout de grâce (en salon)
+const LOBBY_GRACE_MS = 20000;
+
 let onlineCount = 0;
 
 function getPlayerInfo(socket) {
@@ -52,10 +59,9 @@ function setupSocketHandlers(io) {
     const player = getPlayerInfo(socket);
     if (player) socketToUser.set(socket.id, player.userId);
 
+    // ───────── Matchmaking classique (1v1, file instantanée) ─────────
     socket.on(EV.QUEUE_JOIN, (data) => {
       if (!player) { socket.emit('error', { msg: 'Non authentifié' }); return; }
-      // Déjà dans une partie en cours → on le renvoie vers elle plutôt que de
-      // le remettre en file (évite les doubles parties).
       const existing = roomOf(player.userId);
       if (existing && !existing.engine.over) {
         socket.emit(EV.MATCH_FOUND, { gameId: existing.gameId });
@@ -66,7 +72,13 @@ function setupSocketHandlers(io) {
       queue.push({ socketId: socket.id, userId: player.userId, pseudo: player.pseudo, elo: data?.elo || 1000 });
       socket.emit(EV.QUEUE_STATUS, { waiting: true, online: onlineCount });
 
-      if (queue.length >= 2) startMatch(io);
+      if (queue.length >= 2) {
+        const [a, b] = queue.splice(0, 2);
+        createGame(io, MODES.classic, [
+          { ...a, team: 0 },
+          { ...b, team: 1 },
+        ]);
+      }
     });
 
     socket.on(EV.QUEUE_LEAVE, () => {
@@ -74,9 +86,80 @@ function setupSocketHandlers(io) {
       if (idx !== -1) queue.splice(idx, 1);
     });
 
-    // (Re)joindre une partie par son UUID. Source de vérité unique : que ce soit
-    // un nouveau match ou un retour après refresh, le client appelle ça avec le
-    // gameId de l'URL /games/:gameId.
+    // ───────── Salons (modes en équipe) ─────────
+    socket.on(EV.LOBBY_QUICKPLAY, (data) => {
+      if (!player) { socket.emit(EV.LOBBY_ERROR, { msg: 'Non authentifié' }); return; }
+      const mode = getMode(data?.mode);
+      if (!mode.usesLobby) { socket.emit(EV.LOBBY_ERROR, { msg: 'Mode invalide' }); return; }
+      if (userLobby.has(player.userId)) { socket.emit(EV.LOBBY_JOINED, { code: userLobby.get(player.userId) }); return; }
+
+      // Rejoindre un salon public ouvert du même mode, sinon en créer un.
+      let lobby = [...lobbies.values()].find(l => !l.isPrivate && l.mode.id === mode.id && l.members.length < mode.totalPlayers);
+      if (!lobby) lobby = createLobby(mode, false, player.userId);
+      joinLobby(io, socket, lobby, player, data?.elo);
+    });
+
+    socket.on(EV.LOBBY_CREATE, (data) => {
+      if (!player) { socket.emit(EV.LOBBY_ERROR, { msg: 'Non authentifié' }); return; }
+      const mode = getMode(data?.mode);
+      if (!mode.usesLobby) { socket.emit(EV.LOBBY_ERROR, { msg: 'Mode invalide' }); return; }
+      if (userLobby.has(player.userId)) { socket.emit(EV.LOBBY_JOINED, { code: userLobby.get(player.userId) }); return; }
+      const lobby = createLobby(mode, true, player.userId);
+      joinLobby(io, socket, lobby, player, data?.elo);
+    });
+
+    socket.on(EV.LOBBY_JOIN, (data) => {
+      if (!player) { socket.emit(EV.LOBBY_ERROR, { msg: 'Non authentifié' }); return; }
+      const code = String(data?.code || '').trim();
+      const lobby = lobbies.get(code);
+      if (!lobby) { socket.emit(EV.LOBBY_ERROR, { msg: 'Salon introuvable' }); return; }
+
+      // Déjà membre (reconnexion / refresh) : on réattache et on resynchronise.
+      const existing = lobby.members.find(m => m.userId === player.userId);
+      if (existing) {
+        const t = lobbyTimers.get(player.userId);
+        if (t) { clearTimeout(t); lobbyTimers.delete(player.userId); }
+        existing.socketId = socket.id;
+        existing.connected = true;
+        socket.emit(EV.LOBBY_JOINED, { code });
+        broadcastLobby(io, lobby);
+        return;
+      }
+
+      if (lobby.members.length >= lobby.mode.totalPlayers) { socket.emit(EV.LOBBY_ERROR, { msg: 'Salon complet' }); return; }
+      joinLobby(io, socket, lobby, player, data?.elo);
+    });
+
+    socket.on(EV.LOBBY_SET_TEAM, (data) => {
+      if (!player) return;
+      const lobby = lobbies.get(userLobby.get(player.userId));
+      if (!lobby) return;
+      const member = lobby.members.find(m => m.userId === player.userId);
+      if (!member) return;
+      const team = Number(data?.team);
+      if (!(team >= 0 && team < lobby.mode.teamCount)) return;
+      const occupancy = lobby.members.filter(m => m.team === team && m.userId !== player.userId).length;
+      if (occupancy >= lobby.mode.teamSize) { socket.emit(EV.LOBBY_ERROR, { msg: 'Équipe complète' }); return; }
+      member.team = team;
+      broadcastLobby(io, lobby);
+      maybeAutoStart(io, lobby);
+    });
+
+    socket.on(EV.LOBBY_LEAVE, () => {
+      if (!player) return;
+      removeFromLobby(io, player.userId);
+    });
+
+    socket.on(EV.LOBBY_START, () => {
+      if (!player) return;
+      const lobby = lobbies.get(userLobby.get(player.userId));
+      if (!lobby) return;
+      if (lobby.hostUserId !== player.userId) { socket.emit(EV.LOBBY_ERROR, { msg: "Seul l'hôte peut lancer" }); return; }
+      if (!isLobbyReady(lobby)) { socket.emit(EV.LOBBY_ERROR, { msg: 'Équipes incomplètes' }); return; }
+      startLobby(io, lobby);
+    });
+
+    // ───────── (Re)joindre une partie par UUID ─────────
     socket.on(EV.JOIN_GAME, ({ gameId }) => {
       if (!player) { socket.emit('error', { msg: 'Non authentifié' }); return; }
 
@@ -84,24 +167,15 @@ function setupSocketHandlers(io) {
       if (room && !room.engine.over) {
         const idx = findIndex(room, player.userId);
         if (idx === -1) { socket.emit(EV.GAME_NOT_FOUND, { gameId }); return; }
-        // (Ré)attache le socket courant au joueur : nouveau socket.id après un
-        // reload, on le propage partout et on annule le timer d'abandon.
         cancelAbandon(player.userId);
         room.players[idx].socketId = socket.id;
         room.players[idx].connected = true;
         room.engine.players[idx].socketId = socket.id;
         socket.join(gameId);
-        socket.emit(EV.GAME_JOINED, {
-          gameId,
-          myPlayerIndex: idx,
-          players: room.players.map(p => ({ pseudo: p.pseudo, elo: p.elo })),
-          state: room.engine.getFullState(),
-        });
+        socket.emit(EV.GAME_JOINED, gameJoinedPayload(room, idx));
         return;
       }
 
-      // Partie déjà terminée (le joueur était absent au moment de la fin) :
-      // on lui renvoie le résultat conservé pour qu'il voie l'écran de fin.
       const fin = finishedGames.get(gameId);
       if (fin && fin.resultByUserId.has(player.userId)) {
         socket.emit(EV.GAME_END, fin.resultByUserId.get(player.userId));
@@ -111,7 +185,7 @@ function setupSocketHandlers(io) {
       socket.emit(EV.GAME_NOT_FOUND, { gameId });
     });
 
-    // Actions de jeu : routées via userId → partie → index, robuste aux reconnexions.
+    // Actions de jeu : routées via userId → partie → index.
     const actOnGame = (fn) => {
       const userId = socketToUser.get(socket.id);
       if (userId === undefined) return;
@@ -131,27 +205,35 @@ function setupSocketHandlers(io) {
       broadcastOnlineCount(io);
       _eventCounters.delete(socket.id);
 
-      const idx = queue.findIndex(q => q.socketId === socket.id);
-      if (idx !== -1) queue.splice(idx, 1);
+      const qIdx = queue.findIndex(q => q.socketId === socket.id);
+      if (qIdx !== -1) queue.splice(qIdx, 1);
 
       const userId = socketToUser.get(socket.id);
       socketToUser.delete(socket.id);
       if (userId === undefined) return;
 
+      // Salon : grâce courte (le temps d'un refresh) puis retrait.
+      const lobby = lobbies.get(userLobby.get(userId));
+      if (lobby) {
+        const m = lobby.members.find(x => x.userId === userId);
+        if (m && m.socketId === socket.id) {
+          m.connected = false;
+          broadcastLobby(io, lobby);
+          const lt = setTimeout(() => { lobbyTimers.delete(userId); removeFromLobby(io, userId); }, LOBBY_GRACE_MS);
+          lobbyTimers.set(userId, lt);
+        }
+      }
+
+      // Partie : la partie continue, le joueur se fige (tuable). Abandon après grâce.
       const room = roomOf(userId);
       if (!room || room.engine.over) return;
       const pIdx = findIndex(room, userId);
       if (pIdx === -1) return;
-      // Si un autre socket a déjà repris ce joueur (reload rapide), ce
-      // 'disconnect' tardif ne doit pas relancer de timer d'abandon.
       if (room.players[pIdx].socketId !== socket.id) return;
 
       room.players[pIdx].connected = false;
-      // Le joueur déconnecté se fige sur place : il reste vulnérable (l'adversaire
-      // peut le tuer pendant son absence) mais n'arrête pas la partie.
       room.engine.handleInput(pIdx, { up: false, down: false, left: false, right: false });
 
-      // Grâce : s'il ne revient pas à temps, l'adversaire gagne par abandon.
       cancelAbandon(userId);
       const timer = setTimeout(() => {
         abandonTimers.delete(userId);
@@ -159,31 +241,44 @@ function setupSocketHandlers(io) {
         if (!r || r.engine.over) return;
         const i = findIndex(r, userId);
         if (i === -1 || r.players[i].connected) return;
-        _endGame(io, r, { winnerIndex: i === 0 ? 1 : 0, reason: 'abandon' });
+        const team = r.players[i].team;
+        // En équipe, on n'abandonne que si TOUTE l'équipe est partie ; sinon la
+        // partie continue (le coéquipier joue, le joueur figé reste tuable).
+        if (r.players.some(p => p.team === team && p.connected)) return;
+        const winnerTeam = r.players.find(p => p.team !== team)?.team ?? -1;
+        _endGame(io, r, { winnerTeam, reason: 'abandon' });
       }, GAME.RECONNECT_TIMEOUT_MS);
       abandonTimers.set(userId, timer);
     });
   });
 }
 
-function startMatch(io) {
-  const [p1, p2] = queue.splice(0, 2);
+// ─────────────────────────── Parties ───────────────────────────
+
+function gameJoinedPayload(room, idx) {
+  return {
+    gameId: room.gameId,
+    myPlayerIndex: idx,
+    myTeam: room.players[idx].team,
+    mode: publicMode(room.mode),
+    players: room.players.map(p => ({ pseudo: p.pseudo, elo: p.elo, team: p.team })),
+    state: room.engine.getFullState(),
+  };
+}
+
+function createGame(io, mode, roster) {
   const gameId = crypto.randomUUID();
-  const engine = new GameEngine(gameId);
-  engine.addPlayer(p1.userId, p1.pseudo, p1.elo, p1.socketId);
-  engine.addPlayer(p2.userId, p2.pseudo, p2.elo, p2.socketId);
+  const engine = new GameEngine(gameId, mode);
+  roster.forEach(r => engine.addPlayer(r.userId, r.pseudo, r.elo || 1000, r.socketId, r.team));
   engine.start();
 
-  const players = [p1, p2].map(p => ({
-    userId: p.userId, pseudo: p.pseudo, elo: p.elo, socketId: p.socketId, connected: true,
+  const players = roster.map(r => ({
+    userId: r.userId, pseudo: r.pseudo, elo: r.elo || 1000, socketId: r.socketId, team: r.team, connected: true,
   }));
-  const room = { gameId, engine, players, tickInterval: null, fullStateInterval: null, ended: false };
+  const room = { gameId, mode, engine, players, tickInterval: null, fullStateInterval: null, ended: false };
   rooms.set(gameId, room);
-  userActiveGame.set(p1.userId, gameId);
-  userActiveGame.set(p2.userId, gameId);
+  for (const p of players) userActiveGame.set(p.userId, gameId);
 
-  // On dit juste aux deux clients de naviguer vers /games/:gameId. Le détail
-  // (index, joueurs, état) est servi par JOIN_GAME une fois sur la page.
   for (const p of players) {
     const s = io.sockets.sockets.get(p.socketId);
     if (s) s.emit(EV.MATCH_FOUND, { gameId });
@@ -194,16 +289,15 @@ function startMatch(io) {
     engine.consumeEvents().forEach(e => {
       if (e.type === 'hit') io.to(gameId).emit(EV.PLAYER_HIT, { playerIndex: e.victim, by: e.by });
     });
-    if (engine.over) {
-      _endGame(io, room, result);
-      return;
-    }
+    if (engine.over) { _endGame(io, room, result); return; }
     io.to(gameId).emit(EV.GAME_STATE, engine.getState());
   }, GAME.TICK_MS);
 
   room.fullStateInterval = setInterval(() => {
     if (!engine.over) io.to(gameId).emit(EV.GAME_FULL_STATE, engine.getFullState());
   }, GAME.FULL_STATE_INTERVAL_MS);
+
+  return gameId;
 }
 
 const _eventCounters = new Map();
@@ -222,44 +316,48 @@ async function _endGame(io, room, result) {
   clearInterval(room.fullStateInterval);
   room.engine.over = true;
 
-  const { engine, players, gameId } = room;
-  const winnerIndex = result ? result.winnerIndex : engine.getWinnerIndex();
+  const { engine, players, gameId, mode } = room;
+  const winnerTeam = (result && result.winnerTeam !== undefined) ? result.winnerTeam : engine.getWinnerTeam();
   const reason = result?.reason || 'normal';
-  const [p1, p2] = players;
-  const [elo1Delta, elo2Delta] = calculateElo(p1.elo, p2.elo, winnerIndex);
-  const duration = engine.getDurationSeconds();
-  const s = engine.stats;
 
-  try {
-    await saveMatchResult({
-      player1Id: p1.userId, player2Id: p2.userId,
-      winnerId: winnerIndex === 0 ? p1.userId : winnerIndex === 1 ? p2.userId : null,
-      player1HpLeft: engine.players[0].hp, player2HpLeft: engine.players[1].hp,
-      durationSeconds: duration,
-      player1EloDelta: elo1Delta, player2EloDelta: elo2Delta,
-      player1Pings: s[0].pings, player2Pings: s[1].pings,
-      player1Shots: s[0].shots, player2Shots: s[1].shots,
-      player1Hits: s[0].hits, player2Hits: s[1].hits,
-    });
-  } catch (e) {
-    console.error('[endGame] saveMatchResult a échoué', e);
+  // Persistance + Elo uniquement pour les modes classés (1v1 pour l'instant).
+  let eloDeltas = players.map(() => 0);
+  if (mode.ranked && players.length === 2) {
+    const [p1, p2] = players;
+    const [d1, d2] = calculateElo(p1.elo, p2.elo, winnerTeam);
+    eloDeltas = [d1, d2];
+    try {
+      const s = engine.stats;
+      await saveMatchResult({
+        player1Id: p1.userId, player2Id: p2.userId,
+        winnerId: winnerTeam === 0 ? p1.userId : winnerTeam === 1 ? p2.userId : null,
+        player1HpLeft: engine.players[0].hp, player2HpLeft: engine.players[1].hp,
+        durationSeconds: engine.getDurationSeconds(),
+        player1EloDelta: d1, player2EloDelta: d2,
+        player1Pings: s[0].pings, player2Pings: s[1].pings,
+        player1Shots: s[0].shots, player2Shots: s[1].shots,
+        player1Hits: s[0].hits, player2Hits: s[1].hits,
+      });
+    } catch (e) {
+      console.error('[endGame] saveMatchResult a échoué', e);
+    }
   }
 
   const endFor = (idx) => ({
-    winnerIndex,
+    winnerTeam,
     myPlayerIndex: idx,
+    myTeam: players[idx].team,
     myStats: engine.stats[idx],
-    eloDelta: idx === 0 ? elo1Delta : elo2Delta,
-    players: players.map(p => ({ pseudo: p.pseudo, elo: p.elo })),
+    eloDelta: eloDeltas[idx],
+    players: players.map(p => ({ pseudo: p.pseudo, team: p.team })),
+    mode: publicMode(mode),
     reason,
   });
 
-  // On conserve le résultat par joueur pour ceux qui reviendront sur l'URL.
   const resultByUserId = new Map();
   players.forEach((p, idx) => resultByUserId.set(p.userId, endFor(idx)));
   _storeFinished(gameId, resultByUserId);
 
-  // On émet aux joueurs encore connectés.
   players.forEach((p, idx) => {
     const sock = io.sockets.sockets.get(p.socketId);
     if (sock && p.connected) sock.emit(EV.GAME_END, endFor(idx));
@@ -283,6 +381,113 @@ function _cleanupRoom(room) {
     cancelAbandon(p.userId);
   }
   rooms.delete(room.gameId);
+}
+
+// ─────────────────────────── Salons ───────────────────────────
+
+function publicMode(mode) {
+  return {
+    id: mode.id, label: mode.label, short: mode.short, ranked: mode.ranked,
+    teamSize: mode.teamSize, teamCount: mode.teamCount, totalPlayers: mode.totalPlayers,
+    teamNames: mode.teamNames, teamColors: mode.teamColors,
+  };
+}
+
+function genCode() {
+  let c;
+  do { c = String(Math.floor(1000 + Math.random() * 9000)); } while (lobbies.has(c));
+  return c;
+}
+
+function createLobby(mode, isPrivate, hostUserId) {
+  const code = genCode();
+  const lobby = { code, mode, isPrivate, hostUserId, members: [], createdAt: Date.now() };
+  lobbies.set(code, lobby);
+  return lobby;
+}
+
+function teamCounts(lobby) {
+  const c = new Array(lobby.mode.teamCount).fill(0);
+  for (const m of lobby.members) if (m.team != null) c[m.team]++;
+  return c;
+}
+
+function autoTeam(lobby) {
+  const counts = teamCounts(lobby);
+  let best = null, bestN = Infinity;
+  for (let t = 0; t < lobby.mode.teamCount; t++) {
+    if (counts[t] < lobby.mode.teamSize && counts[t] < bestN) { bestN = counts[t]; best = t; }
+  }
+  return best;
+}
+
+function isLobbyReady(lobby) {
+  if (lobby.members.length !== lobby.mode.totalPlayers) return false;
+  return teamCounts(lobby).every(x => x === lobby.mode.teamSize);
+}
+
+function lobbySnapshot(lobby) {
+  return {
+    code: lobby.code,
+    isPrivate: lobby.isPrivate,
+    hostUserId: lobby.hostUserId,
+    mode: publicMode(lobby.mode),
+    members: lobby.members.map(m => ({ userId: m.userId, pseudo: m.pseudo, team: m.team, connected: m.connected })),
+    canStart: isLobbyReady(lobby),
+  };
+}
+
+function broadcastLobby(io, lobby) {
+  const snap = lobbySnapshot(lobby);
+  for (const m of lobby.members) {
+    const s = io.sockets.sockets.get(m.socketId);
+    if (s) s.emit(EV.LOBBY_STATE, snap);
+  }
+}
+
+function joinLobby(io, socket, lobby, player, elo) {
+  const team = autoTeam(lobby);
+  if (team === null) { socket.emit(EV.LOBBY_ERROR, { msg: 'Salon complet' }); return; }
+  lobby.members.push({
+    userId: player.userId, pseudo: player.pseudo, elo: elo || 1000, socketId: socket.id, team, connected: true,
+  });
+  userLobby.set(player.userId, lobby.code);
+  socket.emit(EV.LOBBY_JOINED, { code: lobby.code });
+  broadcastLobby(io, lobby);
+  maybeAutoStart(io, lobby);
+}
+
+function removeFromLobby(io, userId) {
+  const code = userLobby.get(userId);
+  if (!code) return;
+  const lobby = lobbies.get(code);
+  userLobby.delete(userId);
+  const lt = lobbyTimers.get(userId);
+  if (lt) { clearTimeout(lt); lobbyTimers.delete(userId); }
+  if (!lobby) return;
+  lobby.members = lobby.members.filter(m => m.userId !== userId);
+  if (lobby.members.length === 0) { lobbies.delete(code); return; }
+  if (lobby.hostUserId === userId) lobby.hostUserId = lobby.members[0].userId;
+  broadcastLobby(io, lobby);
+}
+
+function maybeAutoStart(io, lobby) {
+  if (lobby.isPrivate) return; // privé : départ manuel par l'hôte
+  if (isLobbyReady(lobby)) startLobby(io, lobby);
+}
+
+function startLobby(io, lobby) {
+  const roster = lobby.members.map(m => ({
+    userId: m.userId, pseudo: m.pseudo, elo: m.elo, socketId: m.socketId, team: m.team,
+  }));
+  // Dissoudre le salon AVANT de créer la partie (createGame pose userActiveGame).
+  for (const m of lobby.members) {
+    userLobby.delete(m.userId);
+    const lt = lobbyTimers.get(m.userId);
+    if (lt) { clearTimeout(lt); lobbyTimers.delete(m.userId); }
+  }
+  lobbies.delete(lobby.code);
+  createGame(io, lobby.mode, roster);
 }
 
 module.exports = { setupSocketHandlers };

@@ -2,13 +2,41 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useApp } from '../context/AppContext';
+import { EV } from '../lib/constants';
 import AuthModal from '../components/AuthModal';
 
 export default function HomePage() {
-  const { user, onlineCount } = useApp();
+  const { user, socket, socketReady, onlineCount } = useApp();
   const router = useRouter();
   const bgRef = useRef(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [code, setCode] = useState('');
+  const [lobbyErr, setLobbyErr] = useState('');
+
+  // Entrée/sortie des salons (2v2) : on écoute la confirmation pour naviguer.
+  useEffect(() => {
+    if (!socketReady) return;
+    const s = socket.current;
+    if (!s) return;
+    const onJoined = ({ code: c }) => router.push(`/lobby/${c}`);
+    const onError = ({ msg }) => setLobbyErr(msg || 'Erreur');
+    // Démarrage instantané possible (4e joueur d'une partie rapide) : on capte
+    // MATCH_FOUND ici aussi pour filer directement en partie.
+    const onMatch = ({ gameId }) => router.replace(`/games/${gameId}`);
+    s.on(EV.LOBBY_JOINED, onJoined);
+    s.on(EV.LOBBY_ERROR, onError);
+    s.on(EV.MATCH_FOUND, onMatch);
+    return () => { s.off(EV.LOBBY_JOINED, onJoined); s.off(EV.LOBBY_ERROR, onError); s.off(EV.MATCH_FOUND, onMatch); };
+  }, [socket, socketReady, router]);
+
+  const needAuth = () => { if (!user) { setShowAuth(true); return true; } return false; };
+  const quickplay = () => { if (needAuth()) return; socket.current?.emit(EV.LOBBY_QUICKPLAY, { mode: 'duo', elo: user.elo || 1000 }); };
+  const createPrivate = () => { if (needAuth()) return; socket.current?.emit(EV.LOBBY_CREATE, { mode: 'duo', elo: user.elo || 1000 }); };
+  const joinCode = () => {
+    if (needAuth()) return;
+    const c = code.trim();
+    if (c) socket.current?.emit(EV.LOBBY_JOIN, { code: c, elo: user.elo || 1000 });
+  };
 
   useEffect(() => {
     const canvas = bgRef.current;
@@ -76,10 +104,32 @@ export default function HomePage() {
         <p style={{ color: 'var(--text-dim)', fontSize: '0.95rem', letterSpacing: '0.06em', marginBottom: '2.5rem' }}>
           L&apos;arène est noire. Émets un ping. Traque ton adversaire.
         </p>
-        <button className="btn btn-lg" onClick={handlePlay} style={{ marginBottom: '1.5rem' }}>
-          {user ? '▶ Jouer' : 'Se connecter pour jouer'}
+        <button className="btn btn-lg" onClick={handlePlay} style={{ marginBottom: '0.5rem' }}>
+          {user ? '▶ Jouer (1v1)' : 'Se connecter pour jouer'}
         </button>
-        <div style={{ color: 'var(--text-dim)', fontSize: '0.75rem', letterSpacing: '0.05em' }}>
+
+        <div className="home-modes">
+          <div className="home-modes-label">En équipe — 2v2</div>
+          <div className="home-modes-row">
+            <button className="btn btn-outline" onClick={quickplay}>Partie rapide</button>
+            <button className="btn btn-outline" onClick={createPrivate}>Créer privé</button>
+          </div>
+          <div className="home-join-row">
+            <input
+              className="home-code-input"
+              value={code}
+              onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 4)); setLobbyErr(''); }}
+              placeholder="Code"
+              inputMode="numeric"
+              maxLength={4}
+              onKeyDown={(e) => e.key === 'Enter' && joinCode()}
+            />
+            <button className="btn btn-outline" onClick={joinCode}>Rejoindre</button>
+          </div>
+          {lobbyErr && <div className="lobby-error">{lobbyErr}</div>}
+        </div>
+
+        <div style={{ color: 'var(--text-dim)', fontSize: '0.75rem', letterSpacing: '0.05em', marginTop: '1.5rem' }}>
           {onlineCount} joueur{onlineCount !== 1 ? 's' : ''} en ligne
         </div>
       </div>

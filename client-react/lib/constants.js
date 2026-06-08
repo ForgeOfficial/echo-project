@@ -69,6 +69,15 @@ export const EV = {
   JOIN_GAME:       'game:join',
   GAME_JOINED:     'game:joined',
   GAME_NOT_FOUND:  'game:not-found',
+  LOBBY_QUICKPLAY: 'lobby:quickplay',
+  LOBBY_CREATE:    'lobby:create',
+  LOBBY_JOIN:      'lobby:join',
+  LOBBY_SET_TEAM:  'lobby:set-team',
+  LOBBY_LEAVE:     'lobby:leave',
+  LOBBY_START:     'lobby:start',
+  LOBBY_JOINED:    'lobby:joined',
+  LOBBY_STATE:     'lobby:state',
+  LOBBY_ERROR:     'lobby:error',
 };
 
 export function getRank(elo) {

@@ -285,6 +285,40 @@ body::after {
 .hud-elo-badge { color: var(--text-dim); font-size: 0.7rem; }
 .hud-timer { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: 0.1em; }
 
+/* Modes en équipe : chaque côté du HUD empile son label + ses membres. */
+.hud-side.team { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
+.hud-side.team.right { align-items: flex-end; }
+.hud-member { display: flex; align-items: center; gap: 0.6rem; }
+.hud-side.team.right .hud-member { flex-direction: row-reverse; }
+.hud-team-label { font-family: var(--font-display); font-size: 0.6rem; letter-spacing: 0.14em; opacity: 0.85; }
+
+/* ——— Salons (lobby 2v2) ——— */
+.lobby-screen { min-height: calc(100vh - 56px); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 1rem; padding: 1rem; }
+.lobby-card { width: min(680px, 94vw); background: rgba(3,3,14,0.9); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.lobby-header { display: flex; justify-content: space-between; align-items: center; }
+.lobby-mode { font-family: var(--font-display); font-size: 1.1rem; letter-spacing: 0.1em; }
+.lobby-tag { color: var(--text-dim); font-size: 0.8rem; }
+.lobby-code { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.35rem 0.7rem; cursor: pointer; font-size: 0.85rem; letter-spacing: 0.1em; }
+.lobby-code b { font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.2em; }
+.lobby-copy { color: var(--text-dim); margin-left: 0.3rem; }
+.lobby-teams { display: flex; gap: 1rem; }
+.lobby-team { flex: 1; border: 1px solid; border-radius: 8px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
+.lobby-team-name { font-family: var(--font-display); letter-spacing: 0.12em; font-size: 0.95rem; }
+.lobby-slot { width: 100%; min-height: 38px; border: 1px dashed var(--border); border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 0.4rem; font-size: 0.85rem; }
+.lobby-slot.filled { border-style: solid; }
+.lobby-empty { color: var(--text-dim); opacity: 0.5; }
+.lobby-you, .lobby-host { font-size: 0.6rem; padding: 1px 5px; border-radius: 99px; background: rgba(255,255,255,0.1); color: var(--text-dim); letter-spacing: 0.05em; }
+.lobby-join-btn { margin-top: 0.25rem; font-size: 0.72rem; padding: 0.35rem 0.8rem; }
+.lobby-actions { display: flex; justify-content: space-between; align-items: center; }
+.lobby-status { color: var(--text-dim); font-size: 0.85rem; }
+.lobby-error { color: var(--warn, #ffae00); font-size: 0.85rem; text-align: center; }
+
+/* ——— Sélecteur de modes sur l'accueil ——— */
+.home-modes { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.6rem; align-items: center; }
+.home-modes-label { color: var(--text-dim); font-size: 0.7rem; letter-spacing: 0.15em; text-transform: uppercase; }
+.home-modes-row, .home-join-row { display: flex; gap: 0.6rem; justify-content: center; }
+.home-code-input { width: 120px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.4rem 0.7rem; letter-spacing: 0.2em; text-align: center; font-family: var(--font-display); }
+
 /* ——— END SCREEN ——— */
 .end-screen {
   display: flex; align-items: center; justify-content: center;

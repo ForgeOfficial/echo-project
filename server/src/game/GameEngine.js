@@ -1,8 +1,17 @@
 const { ARENA, PLAYER, SONAR, PROJECTILE, GAME } = require('../../../shared/constants');
+const { MODES } = require('../../../shared/modes');
 
 class GameEngine {
-  constructor(roomId) {
+  constructor(roomId, mode = MODES.classic) {
     this.roomId = roomId;
+    this.mode = mode;
+    this.teamCount = mode.teamCount;
+    this.teamSize = mode.teamSize;
+    this.totalPlayers = mode.totalPlayers;
+    this.friendlyFire = !!mode.friendlyFire;
+    this.sharedVision = !!mode.sharedVision;
+    this.suddenDeathEnabled = !!mode.suddenDeath;
+
     this.players = [];
     this.projectiles = [];
     this.sonarWaves = [];
@@ -10,34 +19,38 @@ class GameEngine {
     this.startTime = null;
     this.endTime = null;
     this.over = false;
-    this.stats = [
-      { pings: 0, shots: 0, hits: 0 },
-      { pings: 0, shots: 0, hits: 0 },
-    ];
+    this.winnerTeam = null; // fixé quand la partie se termine
+    this.stats = Array.from({ length: this.totalPlayers }, () => ({ pings: 0, shots: 0, hits: 0 }));
     this._projIdSeq = 0;
     this._waveIdSeq = 0;
     this._events = [];
     this.suddenDeath = false;
-    this._spawnCells = this._pickSpawns();
+
+    this._teamSpawns = this._pickTeamSpawns(); // [team][slot] = [col,row]
+    this._teamFill = new Array(this.teamCount).fill(0);
     this._generateMap();
   }
 
-  // Deux spawns aléatoires (hors bordure) avec une distance minimum pour
-  // l'équité : aucun joueur ne démarre collé à l'autre.
-  _pickSpawns() {
+  // Une zone de spawn par équipe (bandes horizontales : 1re équipe à gauche,
+  // dernière à droite), avec teamSize emplacements répartis verticalement. Les
+  // coéquipiers démarrent groupés, loin de l'équipe adverse.
+  _pickTeamSpawns() {
     const cols = ARENA.COLS, rows = ARENA.ROWS;
-    const minDist = Math.round(Math.min(cols, rows) * 0.75); // ~11 cellules
-    const rndCell = () => [
-      1 + Math.floor(Math.random() * (cols - 2)),
-      1 + Math.floor(Math.random() * (rows - 2)),
-    ];
-    for (let tries = 0; tries < 200; tries++) {
-      const a = rndCell();
-      const b = rndCell();
-      if (Math.hypot(a[0] - b[0], a[1] - b[1]) >= minDist) return [a, b];
+    const margin = 2;
+    const spawns = [];
+    for (let t = 0; t < this.teamCount; t++) {
+      const frac = this.teamCount === 1 ? 0.5 : t / (this.teamCount - 1);
+      const baseCol = Math.round(margin + frac * (cols - 1 - margin * 2));
+      const cells = [];
+      for (let i = 0; i < this.teamSize; i++) {
+        const rowFrac = (i + 1) / (this.teamSize + 1);
+        const row = Math.max(1, Math.min(rows - 2, Math.round(rowFrac * (rows - 1)) + (Math.random() < 0.5 ? 0 : 1)));
+        const col = Math.max(1, Math.min(cols - 2, baseCol + (Math.random() < 0.5 ? 0 : (t === 0 ? 1 : -1))));
+        cells.push([col, row]);
+      }
+      spawns.push(cells);
     }
-    // garde-fou : coins opposés
-    return [[1, 1], [cols - 2, rows - 2]];
+    return spawns;
   }
 
   _generateMap() {
@@ -46,9 +59,9 @@ class GameEngine {
     const rows = ARENA.ROWS;
     const S = ARENA.CELL_SIZE;
     const safeZones = new Set();
-    // Protéger une zone 3×3 autour de CHAQUE cellule de spawn pour qu'aucun
-    // joueur ne démarre dans (ou collé à) un mur.
-    this._spawnCells.forEach(([sc, sr]) => {
+    // Protéger une zone 3×3 autour de CHAQUE cellule de spawn (toutes équipes
+    // confondues) pour qu'aucun joueur ne démarre dans (ou collé à) un mur.
+    this._teamSpawns.flat().forEach(([sc, sr]) => {
       for (let dr = -1; dr <= 1; dr++) {
         for (let dc = -1; dc <= 1; dc++) {
           safeZones.add(`${sc + dc},${sr + dr}`);
@@ -63,26 +76,27 @@ class GameEngine {
       }
     }
     this.walls = walls;
-    this._wallSet = new Set(walls.map(w => `${Math.floor(w.x/S)},${Math.floor(w.y/S)}`));
+    this._wallSet = new Set(walls.map(w => `${Math.floor(w.x / S)},${Math.floor(w.y / S)}`));
   }
 
-  addPlayer(userId, pseudo, elo, socketId) {
-    const idx = this.players.length;
+  addPlayer(userId, pseudo, elo, socketId, team = this.players.length) {
     const S = ARENA.CELL_SIZE;
-    const startPositions = this._spawnCells.map(([c, r]) => ({
-      x: c * S + S / 2,
-      y: r * S + S / 2,
-    }));
+    const slot = this._teamFill[team] ?? 0;
+    this._teamFill[team] = slot + 1;
+    const cell = (this._teamSpawns[team] && this._teamSpawns[team][slot]) || this._teamSpawns[team][0] || [1, 1];
+    const x = cell[0] * S + S / 2;
+    const y = cell[1] * S + S / 2;
     this.players.push({
       userId,
       pseudo,
       elo,
       socketId,
-      x: startPositions[idx].x,
-      y: startPositions[idx].y,
+      team,
+      x,
+      y,
       vx: 0,
       vy: 0,
-      angle: idx === 0 ? 0 : Math.PI,
+      angle: Math.atan2(ARENA.HEIGHT / 2 - y, ARENA.WIDTH / 2 - x), // face au centre
       hp: PLAYER.MAX_HP,
       invincibleUntil: 0,
       lastPingTime: 0,
@@ -121,8 +135,7 @@ class GameEngine {
       playerIndex,
     };
     this.sonarWaves.push(wave);
-    // Pinger = s'exposer : c'est le PINGEUR dont la position est révélée à
-    // l'adversaire. Le pingeur, lui, ne voit l'autre que si son onde l'atteint.
+    // Pinger = s'exposer : la position du pingeur est révélée aux adversaires.
     p.exposed = true;
     p.exposedUntil = now + SONAR.EXPOSE_DURATION_MS;
     return wave;
@@ -154,7 +167,7 @@ class GameEngine {
     const dt = dtMs / 1000;
     const now = Date.now();
 
-    // Fin du temps : si égalité de vies → mort subite, sinon fin normale.
+    // Fin du temps : départage par PV d'équipe (cf. _resolveTimer).
     if (!this.suddenDeath && now >= this.endTime) {
       return this._resolveTimer();
     }
@@ -197,7 +210,7 @@ class GameEngine {
       const newY = p.y + dy * PLAYER.SPEED * dt;
       const clampedX = Math.max(PLAYER.RADIUS, Math.min(ARENA.WIDTH - PLAYER.RADIUS, newX));
       const clampedY = Math.max(PLAYER.RADIUS, Math.min(ARENA.HEIGHT - PLAYER.RADIUS, newY));
-      // collision murs + collision avec l'autre joueur (pas de chevauchement)
+      // collision murs + collision avec un autre joueur (pas de chevauchement)
       if (!this._collidesWithWall(clampedX, p.y, PLAYER.RADIUS) && !this._collidesWithPlayer(i, clampedX, p.y)) p.x = clampedX;
       if (!this._collidesWithWall(p.x, clampedY, PLAYER.RADIUS) && !this._collidesWithPlayer(i, p.x, clampedY)) p.y = clampedY;
     });
@@ -247,24 +260,47 @@ class GameEngine {
         toRemove.add(proj.id);
         continue;
       }
-      const targetIdx = 1 - proj.playerIndex;
-      const target = this.players[targetIdx];
-      if (target && target.hp > 0 && now > target.invincibleUntil) {
+      const shooterTeam = this.players[proj.playerIndex]?.team;
+      // Cible : n'importe quel joueur d'une autre équipe (sauf friendly fire).
+      for (let ti = 0; ti < this.players.length; ti++) {
+        if (ti === proj.playerIndex) continue;
+        const target = this.players[ti];
+        if (!target || target.hp <= 0) continue;
+        if (!this.friendlyFire && target.team === shooterTeam) continue;
+        if (now <= target.invincibleUntil) continue;
         const dist = Math.hypot(proj.x - target.x, proj.y - target.y);
         if (dist < PLAYER.RADIUS + PROJECTILE.RADIUS) {
           target.hp--;
           target.invincibleUntil = now + PLAYER.INVINCIBILITY_MS;
           this.stats[proj.playerIndex].hits++;
-          this._events.push({ type: 'hit', victim: targetIdx, by: proj.playerIndex });
+          this._events.push({ type: 'hit', victim: ti, by: proj.playerIndex });
           toRemove.add(proj.id);
-          // Mort subite : le premier coup au but met fin à la partie.
-          if (target.hp <= 0 || this.suddenDeath) {
-            this.over = true;
+          // Fin de partie : équipe adverse éliminée, ou mort subite (1er coup).
+          if (target.hp <= 0 && this._isTeamEliminated(target.team)) {
+            this._setOver(shooterTeam);
+          } else if (this.suddenDeath) {
+            this._setOver(shooterTeam);
           }
+          break; // un projectile ne touche qu'une cible
         }
       }
     }
     this.projectiles = this.projectiles.filter(p => !toRemove.has(p.id));
+  }
+
+  _isTeamEliminated(team) {
+    return this.players.filter(p => p.team === team).every(p => p.hp <= 0);
+  }
+
+  _teamHpSums() {
+    const sums = new Array(this.teamCount).fill(0);
+    for (const p of this.players) sums[p.team] += Math.max(0, p.hp);
+    return sums;
+  }
+
+  _setOver(winnerTeam) {
+    this.over = true;
+    this.winnerTeam = winnerTeam ?? null;
   }
 
   // Récupère et vide les events accumulés depuis le dernier tick (hits, etc.)
@@ -285,42 +321,48 @@ class GameEngine {
   }
 
   _resolveTimer() {
-    const [p0, p1] = this.players;
-    if (p0.hp === p1.hp) {
-      // Égalité de vies → on bascule en mort subite au lieu de finir.
+    const sums = this._teamHpSums();
+    let best = -Infinity, bestTeam = -1, tie = false;
+    sums.forEach((s, t) => {
+      if (s > best) { best = s; bestTeam = t; tie = false; }
+      else if (s === best) { tie = true; }
+    });
+    if (!tie) {
+      this._setOver(bestTeam);
+      return { winnerTeam: bestTeam, reason: 'timer' };
+    }
+    // Égalité de PV : mort subite si le mode l'autorise, sinon match nul.
+    if (this.suddenDeathEnabled) {
       this._enterSuddenDeath();
       return null;
     }
-    this.over = true;
-    return { winnerIndex: p0.hp > p1.hp ? 0 : 1, reason: 'timer' };
+    this._setOver(-1);
+    return { winnerTeam: -1, reason: 'timer' };
   }
 
-  getWinnerIndex() {
-    if (!this.over) return null;
-    const [p0, p1] = this.players;
-    if (p0.hp <= 0 && p1.hp > 0) return 1;
-    if (p1.hp <= 0 && p0.hp > 0) return 0;
-    if (p0.hp > p1.hp) return 0;
-    if (p1.hp > p0.hp) return 1;
+  getWinnerTeam() {
+    if (this.winnerTeam !== null) return this.winnerTeam;
+    const aliveTeams = new Set(this.players.filter(p => p.hp > 0).map(p => p.team));
+    if (aliveTeams.size === 1) return [...aliveTeams][0];
     return -1;
   }
 
   computeVisibility() {
     const S = ARENA.CELL_SIZE;
     const total = ARENA.COLS * ARENA.ROWS;
-    // Mort subite : toute la carte est claire pour les deux joueurs.
+    const n = this.players.length;
+    // Mort subite : toute la carte est claire pour tout le monde.
     if (this.suddenDeath) {
-      return [new Array(total).fill(true), new Array(total).fill(true)];
+      return this.players.map(() => new Array(total).fill(true));
     }
-    const vis = [new Array(total).fill(false), new Array(total).fill(false)];
+    const vis = this.players.map(() => new Array(total).fill(false));
     const now = Date.now();
 
-    // Vrai sonar : seule la BANDE au front de l'onde révèle, dans la limite
-    // de portée. Une cellule n'est éclairée que si le front vient de la
-    // balayer (dans la fenêtre de linger) → blip fugace, pas de révélation
-    // instantanée de toute la zone.
+    // Vrai sonar : seule la BANDE au front de l'onde révèle, dans la limite de
+    // portée → blip fugace, pas de révélation instantanée de toute la zone.
     const lingerDist = SONAR.SPEED * (SONAR.REVEAL_LINGER_MS / 1000);
     for (const wave of this.sonarWaves) {
+      if (!vis[wave.playerIndex]) continue;
       const elapsed = now - wave.startTime;
       const front = Math.min((elapsed / 1000) * SONAR.SPEED, SONAR.MAX_RADIUS);
       const innerEdge = front - lingerDist;
@@ -329,7 +371,6 @@ class GameEngine {
           const cx = c * S + S / 2;
           const cy = r * S + S / 2;
           const dist = Math.hypot(cx - wave.x, cy - wave.y);
-          // dans la portée, derrière le front, mais pas plus vieux que le linger
           if (dist <= SONAR.MAX_RADIUS && dist <= front && dist >= innerEdge) {
             vis[wave.playerIndex][r * ARENA.COLS + c] = true;
           }
@@ -337,7 +378,7 @@ class GameEngine {
       }
     }
 
-    for (let pi = 0; pi < 2; pi++) {
+    for (let pi = 0; pi < n; pi++) {
       const p = this.players[pi];
       if (!p) continue;
       const pc = Math.floor(p.x / S);
@@ -351,6 +392,20 @@ class GameEngine {
         }
       }
     }
+
+    // Vision partagée : union de la vision au sein de chaque équipe.
+    if (this.sharedVision) {
+      const teamMask = new Map();
+      for (let pi = 0; pi < n; pi++) {
+        const t = this.players[pi].team;
+        let m = teamMask.get(t);
+        if (!m) { m = new Array(total).fill(false); teamMask.set(t, m); }
+        const v = vis[pi];
+        for (let k = 0; k < total; k++) if (v[k]) m[k] = true;
+      }
+      for (let pi = 0; pi < n; pi++) vis[pi] = teamMask.get(this.players[pi].team);
+    }
+
     return vis;
   }
 
@@ -359,7 +414,7 @@ class GameEngine {
     const visibility = this.computeVisibility();
     return {
       players: this.players.map(p => ({
-        x: p.x, y: p.y, angle: p.angle, hp: p.hp,
+        x: p.x, y: p.y, angle: p.angle, hp: p.hp, team: p.team,
         exposed: p.exposed,
         lastPingTime: p.lastPingTime,
         invincible: Date.now() < p.invincibleUntil,

@@ -7,7 +7,12 @@ import GameCanvas from '../../../components/GameCanvas';
 import { EV } from '../../../lib/constants';
 
 const STAGE = { LOADING: 'loading', PLAYING: 'playing', END: 'end' };
-const PLAYER_COLORS = ['#00FFFF', '#FF00FF'];
+
+// 'r,g,b' (couleurs d'équipe) → hex, requis par canvas-confetti et le CSS.
+function rgbToHex(rgb) {
+  const [r, g, b] = String(rgb).split(',').map(n => parseInt(n, 10));
+  return '#' + [r, g, b].map(x => Math.max(0, Math.min(255, x || 0)).toString(16).padStart(2, '0')).join('');
+}
 
 export default function GamePage() {
   const { user, setUser, socket, socketReady, authReady } = useApp();
@@ -39,8 +44,8 @@ export default function GamePage() {
     const s = socket.current;
     if (!s) return;
 
-    const onJoined = ({ myPlayerIndex, players, state }) => {
-      setMatchData({ myPlayerIndex, players });
+    const onJoined = ({ myPlayerIndex, myTeam, players, mode, state }) => {
+      setMatchData({ myPlayerIndex, myTeam, players, mode });
       setInitialState(state);
       setStage(STAGE.PLAYING);
     };
@@ -64,20 +69,27 @@ export default function GamePage() {
   }
 
   if (stage === STAGE.END && endData) {
-    const myIdx = endData.myPlayerIndex ?? matchData?.myPlayerIndex ?? 0;
-    const wIdx = endData.winnerIndex;
-    const result = wIdx === myIdx ? 'win' : wIdx === -1 ? 'draw' : 'lose';
+    const myTeam = endData.myTeam ?? matchData?.myTeam ?? 0;
+    const wTeam = endData.winnerTeam;
+    const result = wTeam === myTeam ? 'win' : wTeam === -1 ? 'draw' : 'lose';
+    const mode = endData.mode ?? matchData?.mode;
+    const teamColors = mode?.teamColors ?? ['0,255,255', '255,0,255'];
+    const teamNames = mode?.teamNames ?? ['Cyan', 'Magenta'];
+    const teamSize = mode?.teamSize ?? 1;
     const players = endData.players ?? matchData?.players ?? [];
-    const winnerPseudo = wIdx >= 0 ? (players[wIdx]?.pseudo ?? 'Joueur') : null;
-    const winnerColor = wIdx >= 0 ? PLAYER_COLORS[wIdx] : '#FFD700';
+    const winners = wTeam >= 0 ? players.filter(p => p.team === wTeam).map(p => p.pseudo) : [];
+    const winnerLabel = wTeam < 0 ? null : (teamSize > 1 ? `Équipe ${teamNames[wTeam]}` : winners[0]);
+    const winnerColor = wTeam >= 0 ? rgbToHex(teamColors[wTeam]) : '#FFD700';
     return (
       <EndScreen
         result={result}
         stats={endData.myStats ?? { pings: 0, shots: 0, hits: 0 }}
         eloDelta={endData.eloDelta ?? 0}
         reason={endData.reason}
-        winnerPseudo={winnerPseudo}
+        winnerLabel={winnerLabel}
+        winners={teamSize > 1 ? winners : []}
         winnerColor={winnerColor}
+        showElo={mode?.ranked !== false}
         onRematch={rematch}
         onHome={() => router.replace('/')}
       />
@@ -142,7 +154,7 @@ function playBoo() {
   } catch { /* audio indisponible, on ignore */ }
 }
 
-function EndScreen({ result, stats, eloDelta, reason, winnerPseudo, winnerColor, onRematch, onHome }) {
+function EndScreen({ result, stats, eloDelta, reason, winnerLabel, winners = [], winnerColor, showElo = true, onRematch, onHome }) {
   const acc = stats.shots > 0 ? Math.round((stats.hits / stats.shots) * 100) : 0;
   const sign = eloDelta > 0 ? '+' : '';
   const eloCls = eloDelta >= 0 ? 'pos' : 'neg';
@@ -191,13 +203,16 @@ function EndScreen({ result, stats, eloDelta, reason, winnerPseudo, winnerColor,
   return (
     <div className="end-screen">
       <div className="champion-card">
-        {winnerPseudo ? (
+        {winnerLabel ? (
           <>
             <div className="champion-trophy" style={{ '--wc': winnerColor }}>🏆</div>
-            <div className="champion-label">Champion du duel</div>
+            <div className="champion-label">{winners.length > 1 ? 'Équipe victorieuse' : 'Champion du duel'}</div>
             <div className="champion-name" style={{ color: winnerColor, '--wc': winnerColor }}>
-              {winnerPseudo}
+              {winnerLabel}
             </div>
+            {winners.length > 1 && (
+              <div className="champion-label" style={{ marginTop: '0.15rem' }}>{winners.join(' · ')}</div>
+            )}
           </>
         ) : (
           <div className="champion-name" style={{ color: '#FFD700' }}>ÉGALITÉ</div>
@@ -218,7 +233,9 @@ function EndScreen({ result, stats, eloDelta, reason, winnerPseudo, winnerColor,
           <div className="end-stat"><span className="end-stat-val">{acc}%</span><span className="end-stat-lbl">Précision</span></div>
         </div>
 
-        <div className={`end-elo ${eloCls}`}>{sign}{eloDelta} Elo</div>
+        {showElo
+          ? <div className={`end-elo ${eloCls}`}>{sign}{eloDelta} Elo</div>
+          : <div className="end-elo" style={{ opacity: 0.6 }}>Partie non classée</div>}
 
         <div className="end-actions">
           <button className="btn" onClick={onRematch}>Rejouer</button>

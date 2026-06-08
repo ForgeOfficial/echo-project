@@ -1,9 +1,9 @@
 import { ARENA, PLAYER, SONAR, PROJECTILE } from './constants';
 
-const COLORS = ['0,255,255', '255,0,255']; // P0 cyan, P1 magenta
+const DEFAULT_TEAM_COLORS = ['0,255,255', '255,0,255']; // équipe 0 cyan, 1 magenta
 
-// Détection de proximité de l'adversaire : pleinement visible sous NEAR,
-// fondu progressif jusqu'à disparaître au-delà de FAR.
+// Détection de proximité d'un ennemi : pleinement visible sous NEAR, fondu
+// progressif jusqu'à disparaître au-delà de FAR.
 const PROX_NEAR = 80;
 const PROX_FAR = 185;
 
@@ -19,9 +19,11 @@ export class GameRenderer {
     this.canvas.width = ARENA.WIDTH;
     this.canvas.height = ARENA.HEIGHT;
     this.myPlayerIndex = 0;
+    this.myTeam = 0;
+    this.teamColors = DEFAULT_TEAM_COLORS;
     this._rafId = null;
     this._lastTs = 0;
-    this._hitFlash = [0, 0];
+    this._hitFlash = [];
     this._lastWalls = null;
 
     // Interpolation : on bufferise les snapshots serveur et on rend avec un
@@ -36,6 +38,15 @@ export class GameRenderer {
     // Calques offscreen réutilisés (l'environnement passe par le fog, le reste est net)
     this._scene = this._makeLayer();
     this._mask = this._makeLayer();
+  }
+
+  _teamColor(team) {
+    return this.teamColors[team] || this.teamColors[0] || DEFAULT_TEAM_COLORS[0];
+  }
+
+  // Coéquipiers vivants (moi inclus) : sources de vision partagée.
+  _friendlies(s) {
+    return (s.players || []).filter(p => p && p.team === this.myTeam && p.hp > 0);
   }
 
   _makeLayer() {
@@ -63,6 +74,7 @@ export class GameRenderer {
       visibility: latest.visibility,
       sonarWaves: latest.sonarWaves,
       timeLeft: latest.timeLeft,
+      suddenDeath: latest.suddenDeath,
       walls: this._lastWalls,
     };
     if (buf.length === 1) {
@@ -118,15 +130,17 @@ export class GameRenderer {
 
   triggerHit(playerIndex) { this._hitFlash[playerIndex] = 500; }
 
-  // Lance la célébration du gagnant (à sa dernière position connue)
-  startCelebration(winnerIndex) {
+  // Lance la célébration de l'équipe gagnante (à la dernière position connue
+  // d'un de ses joueurs).
+  startCelebration(winnerTeam) {
     const last = this._buffer[this._buffer.length - 1]?.state;
-    const wp = last?.players?.[winnerIndex];
+    const wp = last?.players?.find(p => p.team === winnerTeam && p.hp > 0)
+      || last?.players?.find(p => p.team === winnerTeam);
     const x = wp?.x ?? ARENA.WIDTH / 2;
     const y = wp?.y ?? ARENA.HEIGHT / 2;
-    this._celebration = { winnerIndex, x, y, start: Date.now() };
+    this._celebration = { winnerTeam, x, y, start: Date.now() };
     this._lastCelebTs = Date.now();
-    const color = COLORS[winnerIndex];
+    const color = this._teamColor(winnerTeam);
     this._confetti = [];
     for (let i = 0; i < 100; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -147,8 +161,9 @@ export class GameRenderer {
   _loop(ts) {
     const dt = ts - this._lastTs;
     this._lastTs = ts;
-    this._hitFlash[0] = Math.max(0, this._hitFlash[0] - dt);
-    this._hitFlash[1] = Math.max(0, this._hitFlash[1] - dt);
+    for (let i = 0; i < this._hitFlash.length; i++) {
+      this._hitFlash[i] = Math.max(0, (this._hitFlash[i] || 0) - dt);
+    }
     this._draw();
     this._rafId = requestAnimationFrame(ts2 => this._loop(ts2));
   }
@@ -196,7 +211,8 @@ export class GameRenderer {
     // ——— 3. Éléments nets par-dessus le fog ———
     this._drawSonarWaves(ctx, s, now);
     this._drawProjectiles(ctx, s);
-    this._drawOpponent(ctx, s, now);
+    this._drawEnemies(ctx, s, now);
+    this._drawTeammates(ctx, s, now);
     this._drawSelf(ctx, s, now);
 
     // ——— 4. Cadre + vignette ———
@@ -205,7 +221,7 @@ export class GameRenderer {
   }
 
   // Mort subite : arène entièrement claire, sans murs ni brouillard, teinte
-  // rouge de tension. Les deux joueurs sont pleinement visibles.
+  // rouge de tension. Tous les joueurs sont pleinement visibles.
   _drawSuddenDeath(ctx, s, now) {
     const W = ARENA.WIDTH, H = ARENA.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 400);
@@ -215,7 +231,6 @@ export class GameRenderer {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    // grille rouge tendue
     ctx.save();
     ctx.strokeStyle = `rgba(255,60,80,${0.05 + 0.03 * pulse})`;
     ctx.lineWidth = 1;
@@ -229,17 +244,15 @@ export class GameRenderer {
 
     this._drawProjectiles(ctx, s);
     if (s.players) {
-      const oppIdx = 1 - this.myPlayerIndex;
-      const opp = s.players[oppIdx];
-      if (opp && opp.hp > 0) {
-        const hit = this._hitFlash[oppIdx] > 0;
-        if (!(hit && Math.floor(now / 80) % 2 === 0))
-          this._drawEntity(ctx, opp, COLORS[oppIdx], now, { self: false, alpha: 1 });
-      }
+      s.players.forEach((p, idx) => {
+        if (!p || p.hp <= 0 || idx === this.myPlayerIndex) return;
+        const isHit = (this._hitFlash[idx] || 0) > 0;
+        if (isHit && Math.floor(now / 80) % 2 === 0) return;
+        this._drawEntity(ctx, p, this._teamColor(p.team), now, { self: false, alpha: 1 });
+      });
     }
     this._drawSelf(ctx, s, now);
 
-    // cadre rouge
     ctx.save();
     ctx.strokeStyle = `rgba(255,60,80,${0.6 + 0.3 * pulse})`;
     ctx.lineWidth = 2.5;
@@ -265,27 +278,26 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  // Masque de lumière doux : halo du joueur + disques feutrés des ondes
+  // Masque de lumière doux : halos des coéquipiers (vision partagée) + disques
+  // feutrés au front des ondes de mon équipe.
   _buildMask(s, now) {
     const mctx = this._mask.ctx;
     mctx.clearRect(0, 0, ARENA.WIDTH, ARENA.HEIGHT);
 
-    const me = s.players?.[this.myPlayerIndex];
-    if (me && me.hp > 0) {
+    for (const f of this._friendlies(s)) {
       const auraR = 95;
-      const g = mctx.createRadialGradient(me.x, me.y, 0, me.x, me.y, auraR);
+      const g = mctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, auraR);
       g.addColorStop(0, 'rgba(255,255,255,0.95)');
       g.addColorStop(0.55, 'rgba(255,255,255,0.45)');
       g.addColorStop(1, 'rgba(255,255,255,0)');
       mctx.fillStyle = g;
-      mctx.beginPath(); mctx.arc(me.x, me.y, auraR, 0, Math.PI * 2); mctx.fill();
+      mctx.beginPath(); mctx.arc(f.x, f.y, auraR, 0, Math.PI * 2); mctx.fill();
     }
 
-    // Bande de lumière au front de l'onde (sonar) — révèle en balayant,
-    // dans la limite de portée, puis l'obscurité revient.
     if (s.sonarWaves) {
       const lingerDist = SONAR.SPEED * (SONAR.REVEAL_LINGER_MS / 1000);
       for (const wave of s.sonarWaves) {
+        if (s.players?.[wave.playerIndex]?.team !== this.myTeam) continue; // seulement mon équipe
         const elapsed = now - wave.startTime;
         const front = Math.min((elapsed / 1000) * SONAR.SPEED, SONAR.MAX_RADIUS);
         if (front <= 0) continue;
@@ -332,7 +344,7 @@ export class GameRenderer {
       const progress = elapsed / SONAR.LIFETIME_MS;
       if (progress >= 1 || radius <= 0) return;
       const alpha = Math.max(0, 1 - progress);
-      const color = COLORS[wave.playerIndex];
+      const color = this._teamColor(s.players?.[wave.playerIndex]?.team);
       ctx.beginPath();
       ctx.arc(wave.x, wave.y, radius, 0, Math.PI * 2);
       ctx.strokeStyle = `rgba(${color},${alpha * 0.9})`;
@@ -356,11 +368,11 @@ export class GameRenderer {
     if (!s.projectiles) return;
     ctx.save();
     s.projectiles.forEach(p => {
-      // Mes propres tirs sont toujours visibles (je suis ma trajectoire) ;
-      // ceux de l'adversaire seulement dans les zones révélées.
-      const mine = p.playerIndex === this.myPlayerIndex;
-      if (!mine && !s.suddenDeath && !this._isVisible(s, p.x, p.y)) return;
-      const color = COLORS[p.playerIndex];
+      // Les tirs de mon équipe sont toujours visibles ; ceux des ennemis
+      // seulement dans les zones révélées.
+      const friendly = s.players?.[p.playerIndex]?.team === this.myTeam;
+      if (!friendly && !s.suddenDeath && !this._isVisible(s, p.x, p.y)) return;
+      const color = this._teamColor(s.players?.[p.playerIndex]?.team);
       const speed = Math.hypot(p.vx, p.vy);
       if (speed > 0) {
         const tx = p.x - (p.vx / speed) * 18, ty = p.y - (p.vy / speed) * 18;
@@ -381,30 +393,40 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  // Adversaire : même entité echo core (magenta). Révélé selon 3 sources,
-  // avec un fondu progressif → pas de "pop" brutal :
-  //  - proximité : fondu doux selon la distance (voir d'un peu plus loin)
-  //  - onde sonar : quand mon front le balaie
-  //  - exposition : quand il pinge (il se trahit)
-  _drawOpponent(ctx, s, now) {
+  // Ennemis : révélés selon 3 sources avec un fondu progressif (pas de "pop") :
+  //  - proximité d'un de mes coéquipiers (vision partagée)
+  //  - onde sonar de mon équipe qui les balaie
+  //  - exposition : quand ils pingent (ils se trahissent)
+  _drawEnemies(ctx, s, now) {
     if (!s.players) return;
-    const oppIdx = 1 - this.myPlayerIndex;
-    const p = s.players[oppIdx];
-    const me = s.players[this.myPlayerIndex];
-    if (!p || p.hp <= 0) return;
-    const isHit = this._hitFlash[oppIdx] > 0;
-    if (isHit && Math.floor(now / 80) % 2 === 0) return;
+    const friendlies = this._friendlies(s);
+    s.players.forEach((p, idx) => {
+      if (!p || p.hp <= 0 || p.team === this.myTeam) return;
+      const isHit = (this._hitFlash[idx] || 0) > 0;
+      if (isHit && Math.floor(now / 80) % 2 === 0) return;
 
-    let alpha = 0;
-    if (me) {
-      const dist = Math.hypot(p.x - me.x, p.y - me.y);
-      alpha = 1 - smoothstep(PROX_NEAR, PROX_FAR, dist); // fondu par distance
-    }
-    if (this._isVisible(s, p.x, p.y)) alpha = Math.max(alpha, 1); // balayé par le sonar
-    if (p.exposed) alpha = Math.max(alpha, 1);                    // il vient de pinger
-    if (alpha <= 0.02) return;
+      let alpha = 0;
+      for (const f of friendlies) {
+        const dist = Math.hypot(p.x - f.x, p.y - f.y);
+        alpha = Math.max(alpha, 1 - smoothstep(PROX_NEAR, PROX_FAR, dist));
+      }
+      if (this._isVisible(s, p.x, p.y)) alpha = Math.max(alpha, 1);
+      if (p.exposed) alpha = Math.max(alpha, 1);
+      if (alpha <= 0.02) return;
 
-    this._drawEntity(ctx, p, COLORS[oppIdx], now, { self: false, alpha });
+      this._drawEntity(ctx, p, this._teamColor(p.team), now, { self: false, alpha });
+    });
+  }
+
+  // Coéquipiers (hors moi) : toujours visibles grâce à la vision partagée.
+  _drawTeammates(ctx, s, now) {
+    if (!s.players) return;
+    s.players.forEach((p, idx) => {
+      if (!p || p.hp <= 0 || idx === this.myPlayerIndex || p.team !== this.myTeam) return;
+      const isHit = (this._hitFlash[idx] || 0) > 0;
+      if (isHit && Math.floor(now / 80) % 2 === 0) return;
+      this._drawEntity(ctx, p, this._teamColor(p.team), now, { self: false, alpha: 1 });
+    });
   }
 
   // Mon entité : echo core net + balayage radar + cooldown
@@ -412,21 +434,18 @@ export class GameRenderer {
     if (!s.players) return;
     const me = s.players[this.myPlayerIndex];
     if (!me || me.hp <= 0) return;
-    const isHit = this._hitFlash[this.myPlayerIndex] > 0;
+    const isHit = (this._hitFlash[this.myPlayerIndex] || 0) > 0;
     if (isHit && Math.floor(now / 70) % 2 === 0) return;
-    this._drawEntity(ctx, me, COLORS[this.myPlayerIndex], now, { self: true });
+    this._drawEntity(ctx, me, this._teamColor(this.myTeam), now, { self: true });
   }
 
   // Entité partagée : halo + anneau + proue directionnelle + coeur dégradé.
-  // self=true ajoute le balayage radar et l'arc de cooldown sonar.
-  // alpha : opacité globale (fondu de proximité pour l'adversaire).
   _drawEntity(ctx, p, color, now, { self, alpha = 1 }) {
     const angle = p.angle || 0;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(p.x, p.y);
 
-    // halo doux
     const haloR = self ? 34 : 28;
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, haloR);
     glow.addColorStop(0, `rgba(${color},${self ? 0.32 : 0.28})`);
@@ -434,7 +453,6 @@ export class GameRenderer {
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(0, 0, haloR, 0, Math.PI * 2); ctx.fill();
 
-    // balayage radar (self uniquement)
     if (self && ctx.createConicGradient) {
       ctx.save();
       ctx.rotate(now / 700);
@@ -447,12 +465,10 @@ export class GameRenderer {
       ctx.restore();
     }
 
-    // anneau extérieur
     ctx.strokeStyle = `rgba(${color},${self ? 0.35 : 0.5})`;
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(0, 0, PLAYER.RADIUS + 7, 0, Math.PI * 2); ctx.stroke();
 
-    // proue directionnelle (chevron) — montre l'orientation réelle
     ctx.save();
     ctx.rotate(angle);
     ctx.shadowColor = `rgba(${color},0.9)`;
@@ -466,7 +482,6 @@ export class GameRenderer {
     ctx.fill();
     ctx.restore();
 
-    // coeur net avec dégradé
     const core = ctx.createRadialGradient(0, -3, 1, 0, 0, PLAYER.RADIUS);
     core.addColorStop(0, '#ffffff');
     core.addColorStop(0.4, `rgba(${color},0.9)`);
@@ -481,7 +496,6 @@ export class GameRenderer {
     ctx.strokeStyle = `rgba(${color},1)`;
     ctx.stroke();
 
-    // arc de cooldown sonar (self uniquement)
     if (self && p.lastPingTime) {
       const cd = Math.min((now - p.lastPingTime) / SONAR.COOLDOWN_MS, 1);
       if (cd < 1) {
@@ -496,16 +510,13 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  // Célébration du gagnant : flash, rayons rotatifs, ondes de choc, confettis
-  // et echo core agrandi qui pulse — avant l'écran de victoire.
   _drawCelebration(ctx, now) {
     const c = this._celebration;
     const el = now - c.start;
     const W = ARENA.WIDTH, H = ARENA.HEIGHT;
-    const color = COLORS[c.winnerIndex];
+    const color = this._teamColor(c.winnerTeam);
     const flash = Math.max(0, 1 - el / 700);
 
-    // fond lumineux qui retombe vers l'obscurité
     const bg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, W * 0.9);
     bg.addColorStop(0, `rgba(${color},${0.22 + 0.5 * flash})`);
     bg.addColorStop(0.5, `rgba(${color},${0.06 + 0.16 * flash})`);
@@ -513,7 +524,6 @@ export class GameRenderer {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    // rayons de lumière rotatifs
     ctx.save();
     ctx.translate(c.x, c.y);
     ctx.rotate(el / 1400);
@@ -530,7 +540,6 @@ export class GameRenderer {
     }
     ctx.restore();
 
-    // ondes de choc successives
     for (let k = 0; k < 4; k++) {
       const wEl = el - k * 420;
       if (wEl < 0) continue;
@@ -547,7 +556,6 @@ export class GameRenderer {
     }
     ctx.shadowBlur = 0;
 
-    // confettis
     const dt = Math.min(50, now - this._lastCelebTs) / 1000;
     this._lastCelebTs = now;
     ctx.save();
@@ -571,7 +579,6 @@ export class GameRenderer {
     ctx.restore();
     ctx.globalAlpha = 1;
 
-    // halo + echo core agrandi qui pulse
     const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 90);
     glow.addColorStop(0, `rgba(${color},0.5)`);
     glow.addColorStop(1, `rgba(${color},0)`);
@@ -600,7 +607,6 @@ export class GameRenderer {
     ctx.shadowBlur = 12;
     ctx.strokeRect(2, 2, W - 4, H - 4);
 
-    // équerres d'angle
     ctx.shadowBlur = 0;
     ctx.strokeStyle = `rgba(0,255,255,0.9)`;
     ctx.lineWidth = 2.5;

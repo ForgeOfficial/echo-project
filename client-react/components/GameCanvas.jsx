@@ -42,12 +42,17 @@ export default function GameCanvas({ matchData, initialState }) {
     }
   }, []);
 
-  // Initialiser playerIndex depuis le payload serveur (fiable, pas de matching pseudo)
+  // Initialiser index/équipe/couleurs depuis le payload serveur (fiable).
   useEffect(() => {
     if (!matchData) return;
     const myIdx = matchData.myPlayerIndex ?? 0;
     myIdxRef.current = myIdx;
-    if (rendererRef.current) rendererRef.current.myPlayerIndex = myIdx;
+    const r = rendererRef.current;
+    if (r) {
+      r.myPlayerIndex = myIdx;
+      r.myTeam = matchData.myTeam ?? 0;
+      if (matchData.mode?.teamColors) r.teamColors = matchData.mode.teamColors;
+    }
     setHudState(h => ({ ...h, matchInfo: matchData }));
   }, [matchData]);
 
@@ -77,6 +82,8 @@ export default function GameCanvas({ matchData, initialState }) {
     // L'effet matchData (défini plus haut) a déjà fixé myIdxRef avant la
     // création du renderer : on applique l'index ici pour la bonne POV.
     renderer.myPlayerIndex = myIdxRef.current;
+    renderer.myTeam = matchData?.myTeam ?? 0;
+    if (matchData?.mode?.teamColors) renderer.teamColors = matchData.mode.teamColors;
     rendererRef.current = renderer;
     // État initial fourni par JOIN_GAME (murs + positions) : évite d'attendre
     // le prochain full-state pour afficher l'arène, y compris en reconnexion.
@@ -170,15 +177,48 @@ export default function GameCanvas({ matchData, initialState }) {
   }, []);
 
   const { players, timeLeft, matchInfo, suddenDeath } = hudState;
-  const p1 = matchInfo?.players[0] ?? matchData?.players[0];
-  const p2 = matchInfo?.players[1] ?? matchData?.players[1];
-  const hp1 = players[0]?.hp ?? PLAYER.MAX_HP;
-  const hp2 = players[1]?.hp ?? PLAYER.MAX_HP;
+  const info = matchInfo || matchData;
+  const mode = info?.mode;
+  const roster = info?.players ?? [];
+  const teamColors = mode?.teamColors ?? ['0,255,255', '255,0,255'];
+  const teamNames = mode?.teamNames ?? ['Cyan', 'Magenta'];
+  const teamSize = mode?.teamSize ?? 1;
   const timeWarning = timeLeft < 30000;
 
   const formatTime = (ms) => {
     const s = Math.ceil(ms / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  const renderMember = (m) => {
+    const hp = players[m.idx]?.hp ?? PLAYER.MAX_HP;
+    const col = `rgb(${teamColors[m.team] ?? teamColors[0]})`;
+    return (
+      <div key={m.idx} className="hud-member">
+        <span className="hud-name" style={{ color: col }}>{m.pseudo ?? 'Joueur'}</span>
+        <div className="hud-hp">
+          {Array.from({ length: PLAYER.MAX_HP }).map((_, i) => (
+            <span key={i} className="hp-dot" style={i < hp
+              ? { background: col, border: `1px solid ${col}`, boxShadow: `0 0 8px ${col}` }
+              : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
+          ))}
+        </div>
+        {teamSize === 1 && m.elo != null && <span className="hud-elo-badge">{m.elo}</span>}
+      </div>
+    );
+  };
+
+  const teamPanel = (t, side) => {
+    const members = roster.map((p, idx) => ({ ...p, idx })).filter(p => p.team === t);
+    const cls = `hud-side ${side}${teamSize > 1 ? ' team' : ''}`;
+    return (
+      <div className={cls}>
+        {teamSize > 1 && (
+          <span className="hud-team-label" style={{ color: `rgb(${teamColors[t]})` }}>{teamNames[t]}</span>
+        )}
+        {(members.length ? members : [{ pseudo: `Joueur ${t + 1}`, team: t, idx: t }]).map(renderMember)}
+      </div>
+    );
   };
 
   return (
@@ -187,27 +227,11 @@ export default function GameCanvas({ matchData, initialState }) {
       <div className="game-scaler" style={{ transform: `scale(${scale})` }}>
       <div className="game-stage" ref={stageRef}>
         <div className="game-hud">
-          <div className="hud-side">
-            <span className="hud-name p1">{p1?.pseudo ?? 'Joueur 1'}</span>
-            <div className="hud-hp">
-              {Array.from({ length: PLAYER.MAX_HP }).map((_, i) => (
-                <span key={i} className={`hp-dot p1 ${i < hp1 ? 'filled' : 'empty'}`} />
-              ))}
-            </div>
-            <span className="hud-elo-badge">{p1?.elo ?? ''}</span>
-          </div>
+          {teamPanel(0, 'left')}
           <div className="hud-timer" style={{ color: suddenDeath ? '#FF3C50' : (timeWarning ? 'var(--warn)' : 'var(--text)') }}>
             {suddenDeath ? '☠ SUBITE' : formatTime(timeLeft)}
           </div>
-          <div className="hud-side right">
-            <span className="hud-name p2">{p2?.pseudo ?? 'Joueur 2'}</span>
-            <div className="hud-hp">
-              {Array.from({ length: PLAYER.MAX_HP }).map((_, i) => (
-                <span key={i} className={`hp-dot p2 ${i < hp2 ? 'filled' : 'empty'}`} />
-              ))}
-            </div>
-            <span className="hud-elo-badge">{p2?.elo ?? ''}</span>
-          </div>
+          {teamPanel(1, 'right')}
         </div>
         <div style={{ position: 'relative' }}>
           <canvas ref={canvasRef} className="game-canvas" />
