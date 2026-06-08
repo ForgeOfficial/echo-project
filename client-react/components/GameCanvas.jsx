@@ -22,8 +22,9 @@ export default function GameCanvas({ matchData, initialState }) {
   const audioUnlockedRef = useRef(false);
   const aliveRef = useRef(true);
 
-  // Arène dimensionnée selon le nombre de joueurs (même formule que le serveur).
-  const arena = arenaForPlayers(matchData?.mode?.totalPlayers || 2);
+  // Arène dimensionnée selon le nombre de joueurs (même formule que le serveur),
+  // avec le multiplicateur de taille du mode (parties custom).
+  const arena = arenaForPlayers(matchData?.mode?.totalPlayers || 2, matchData?.mode?.mapScale || 1);
 
   // Retour de dégâts quand JE prends un coup : flash rouge + secousse + son
   const playDamageFx = useCallback(() => {

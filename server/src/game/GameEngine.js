@@ -1,4 +1,4 @@
-const { PLAYER, SONAR, PROJECTILE, VISION, GAME } = require('../../../shared/constants');
+const { PLAYER, SONAR, PROJECTILE, WALL, VISION, GAME } = require('../../../shared/constants');
 const { MODES, arenaForPlayers } = require('../../../shared/modes');
 
 // Zone toxique (border map) : rectangle central qui rétrécit avec le temps.
@@ -29,8 +29,9 @@ class GameEngine {
     this.killTarget = mode.killTarget || 0;
     this.respawnMs = mode.respawnMs || 3000;
 
-    // Arène dimensionnée selon le nombre de joueurs (source partagée).
-    this.arena = arenaForPlayers(this.totalPlayers);
+    // Arène dimensionnée selon le nombre de joueurs (source partagée), avec un
+    // multiplicateur de taille optionnel (parties custom).
+    this.arena = arenaForPlayers(this.totalPlayers, mode.mapScale || 1);
 
     this.players = [];
     this.projectiles = [];
@@ -306,9 +307,11 @@ class GameEngine {
     for (let r = minR; r <= maxR; r++) {
       for (let c = minC; c <= maxC; c++) {
         if (this._wallSet.has(`${c},${r}`)) {
-          const wx = c * S, wy = r * S;
-          const nearX = Math.max(wx, Math.min(wx + S, x));
-          const nearY = Math.max(wy, Math.min(wy + S, y));
+          // On épouse le bloc VISIBLE (retrait WALL.PAD) et non la cellule entière.
+          const x0 = c * S + WALL.PAD, x1 = c * S + S - WALL.PAD;
+          const y0 = r * S + WALL.PAD, y1 = r * S + S - WALL.PAD;
+          const nearX = Math.max(x0, Math.min(x1, x));
+          const nearY = Math.max(y0, Math.min(y1, y));
           const dist = Math.hypot(x - nearX, y - nearY);
           if (dist < radius) return true;
         }
@@ -527,6 +530,9 @@ class GameEngine {
     const sd = this.suddenDeath;
     const observer = this.players[observerIndex];
     const obsTeam = observer ? observer.team : -1;
+    // Observateur mort (Frags, en attente de respawn) : il ne voit plus personne,
+    // même via le sonar d'un coéquipier → on lui sert une arène vide.
+    const observerDead = !observer || observer.hp <= 0;
 
     // Sources de révélation de l'équipe de l'observateur : coéquipiers vivants
     // (proximité) + bandes au front des ondes sonar de l'équipe.
@@ -570,13 +576,16 @@ class GameEngine {
     };
 
     const players = this.players.map((p, i) => {
-      // Soi-même et coéquipiers : toujours en clair.
+      // Soi-même : toujours en clair.
       if (i === observerIndex) return full(p, true);
-      if (p.team === obsTeam) return full(p, false);
       // Culé : on ne garde que ce dont le HUD a besoin (hp + team). x:null =
       // sentinelle « hors-vue » (pas de position → pas dessiné) ; angle/exposed
       // sont inutiles sur un slot invisible.
       const culled = { x: null, y: null, hp: p.hp, team: p.team };
+      // Mort en attente de respawn : aucune intel sur autrui (ni allié ni ennemi).
+      if (observerDead) return culled;
+      // Coéquipiers : toujours en clair.
+      if (p.team === obsTeam) return full(p, false);
       // Ennemi mort : pas de position (non dessiné de toute façon), HUD garde hp.
       if (p.hp <= 0) return culled;
       // Ennemi vivant : soumis à l'interest management.
@@ -596,7 +605,7 @@ class GameEngine {
     }
 
     const projectiles = [];
-    for (const pr of this.projectiles) {
+    if (!observerDead) for (const pr of this.projectiles) {
       const owner = this.players[pr.playerIndex];
       const friendly = owner && owner.team === obsTeam;
       if (friendly || sd || revealsPoint(pr.x, pr.y)) {
@@ -607,9 +616,14 @@ class GameEngine {
     return {
       players,
       projectiles,
-      // Ondes de l'équipe de l'observateur uniquement (les ondes ennemies ne
-      // doivent pas fuiter la position de l'émetteur hors-vue).
-      sonarWaves: teamWaves.map(w => ({ id: w.id, x: w.x, y: w.y, startTime: w.startTime, playerIndex: w.playerIndex })),
+      // Toutes les ondes (alliées ET ennemies) sont envoyées pour l'affichage :
+      // pinger expose globalement l'émetteur (cf. handlePing → exposed), donc sa
+      // position d'émission est déjà révélée — montrer l'anneau ne fuite rien de
+      // plus, et le client ne tire AUCUNE vision d'une onde ennemie (mask/fog
+      // restent filtrés sur l'équipe). Aucune onde tant qu'on est mort.
+      sonarWaves: observerDead ? [] : this.sonarWaves
+        .filter(w => this.players[w.playerIndex])
+        .map(w => ({ id: w.id, x: w.x, y: w.y, startTime: w.startTime, playerIndex: w.playerIndex })),
       zone: this.zone,
       timeLeft: Math.max(0, this.endTime - now),
       suddenDeath: sd,

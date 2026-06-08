@@ -421,6 +421,7 @@ function publicMode(mode) {
     objective: mode.objective || 'survival',
     killTarget: mode.killTarget || 0,
     respawnMs: mode.respawnMs || 0,
+    mapScale: mode.mapScale || 1,
   };
 }
 

@@ -30,6 +30,12 @@ export const PROJECTILE = {
   MAX_ACTIVE: 3,
 };
 
+// Retrait du bloc mur (dessin + collision). Doit rester identique à
+// shared/constants.js pour que la prédiction client colle au serveur.
+export const WALL = {
+  PAD: 3,
+};
+
 // Doit rester identique à shared/constants.js (interest management serveur ↔ rendu).
 export const VISION = {
   VIEW_RADIUS: 230,

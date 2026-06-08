@@ -31,6 +31,14 @@ const PROJECTILE = {
   MAX_ACTIVE: 3,
 };
 
+// Mur : un bloc est DESSINÉ avec ce retrait sur chaque côté (cf. renderer
+// _drawWalls : w.x + PAD, taille CELL_SIZE - 2*PAD). La collision épouse ce bloc
+// visible plutôt que la cellule entière, sinon on se fait bloquer ~PAD px AVANT
+// de toucher le bloc qu'on voit. Doit rester synchronisé avec le rendu.
+const WALL = {
+  PAD: 3,
+};
+
 // Interest management (anti-wallhack + scaling) : le serveur ne révèle à chaque
 // joueur que les ennemis qu'il « voit » réellement. Source partagée client/serveur.
 const VISION = {
@@ -101,5 +109,5 @@ const SOCKET_EVENTS = {
 };
 
 if (typeof module !== 'undefined') {
-  module.exports = { ARENA, PLAYER, SONAR, PROJECTILE, VISION, GAME, ELO, RANKS, SOCKET_EVENTS };
+  module.exports = { ARENA, PLAYER, SONAR, PROJECTILE, WALL, VISION, GAME, ELO, RANKS, SOCKET_EVENTS };
 }

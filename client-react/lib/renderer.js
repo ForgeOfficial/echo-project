@@ -1,4 +1,4 @@
-import { ARENA, PLAYER, SONAR, PROJECTILE } from './constants';
+import { ARENA, PLAYER, SONAR, PROJECTILE, WALL } from './constants';
 
 const DEFAULT_TEAM_COLORS = ['0,255,255', '255,0,255']; // équipe 0 cyan, 1 magenta
 
@@ -56,9 +56,11 @@ export class GameRenderer {
     return this.teamColors[team] || this.teamColors[0] || DEFAULT_TEAM_COLORS[0];
   }
 
-  // Coéquipiers vivants (moi inclus) : sources de vision partagée.
+  // Coéquipiers vivants (moi inclus) : sources de vision partagée. On exige une
+  // position : un slot culé (x null, ex. quand JE suis mort en attente de respawn)
+  // ne révèle rien.
   _friendlies(s) {
-    return (s.players || []).filter(p => p && p.team === this.myTeam && p.hp > 0);
+    return (s.players || []).filter(p => p && p.team === this.myTeam && p.hp > 0 && p.x != null);
   }
 
   _makeLayer() {
@@ -152,9 +154,11 @@ export class GameRenderer {
     for (let r = minR; r <= maxR; r++) {
       for (let c = minC; c <= maxC; c++) {
         if (set.has(`${c},${r}`)) {
-          const wx = c * S, wy = r * S;
-          const nearX = Math.max(wx, Math.min(wx + S, x));
-          const nearY = Math.max(wy, Math.min(wy + S, y));
+          // Même boîte que le serveur : bloc visible (retrait WALL.PAD), pas la cellule.
+          const x0 = c * S + WALL.PAD, x1 = c * S + S - WALL.PAD;
+          const y0 = r * S + WALL.PAD, y1 = r * S + S - WALL.PAD;
+          const nearX = Math.max(x0, Math.min(x1, x));
+          const nearY = Math.max(y0, Math.min(y1, y));
           if (Math.hypot(x - nearX, y - nearY) < R) return true;
         }
       }
@@ -504,7 +508,7 @@ export class GameRenderer {
     const R = 6;
     s.walls.forEach(w => {
       if (!this._isVisible(s, w.x + this.arena.CELL_SIZE / 2, w.y + this.arena.CELL_SIZE / 2)) return;
-      const x = w.x + 3, y = w.y + 3, sz = this.arena.CELL_SIZE - 6;
+      const x = w.x + WALL.PAD, y = w.y + WALL.PAD, sz = this.arena.CELL_SIZE - WALL.PAD * 2;
       const g = ctx.createLinearGradient(x, y, x, y + sz);
       g.addColorStop(0, '#123047');
       g.addColorStop(1, '#0a1c2c');

@@ -18,9 +18,12 @@ const TEAM_NAMES_2 = ['Rouge', 'Bleu'];
 // Taille de l'arène en fonction du nombre de joueurs : plus on est nombreux,
 // plus la carte est grande (cellules de 40px, ratio ~4:3). Source unique
 // partagée client/serveur pour que physique et rendu coïncident.
-function arenaForPlayers(n) {
+function arenaForPlayers(n, scale = 1) {
   // 2j→20, 8j→26, 16j→37, 30j→55 (densité de joueurs raisonnable jusqu'à ~32).
-  const cols = Math.max(20, Math.min(60, Math.round(16 + n * 1.3)));
+  let cols = Math.max(20, Math.min(60, Math.round(16 + n * 1.3)));
+  // Multiplicateur de taille (parties custom) appliqué PAR-DESSUS le scaling auto.
+  // À scale=1 on garde exactement le comportement historique (modes classés).
+  if (scale && scale !== 1) cols = Math.max(14, Math.min(80, Math.round(cols * scale)));
   const rows = Math.round(cols * 0.75);
   const CELL_SIZE = 40;
   return { CELL_SIZE, COLS: cols, ROWS: rows, WIDTH: cols * CELL_SIZE, HEIGHT: rows * CELL_SIZE };
@@ -45,6 +48,10 @@ function buildCustomMode(config = {}) {
   const deathmatch = objective === 'deathmatch';
   const killTarget = clampInt(config.killTarget, 5, 50, 15);
   const respawnMs = clampInt(config.respawnSec, 1, 10, 3) * 1000;
+  // Multiplicateur de taille d'arène (par-dessus le scaling auto par effectif).
+  let mapScale = Number(config.mapScale);
+  if (!Number.isFinite(mapScale)) mapScale = 1;
+  mapScale = Math.max(0.6, Math.min(1.8, mapScale));
   // En Frags, la zone toxique n'a pas de sens (on réapparaît) → désactivée.
   const borderMap = deathmatch ? false : !!config.borderMap;
 
@@ -78,6 +85,7 @@ function buildCustomMode(config = {}) {
     objective,
     killTarget,
     respawnMs,
+    mapScale,
     teamSize,
     teamCount,
     totalPlayers,

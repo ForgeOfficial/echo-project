@@ -1,5 +1,14 @@
 'use client';
 import { useState } from 'react';
+import { arenaForPlayers } from '../lib/modes';
+
+// Multiplicateurs de taille d'arène (par-dessus le scaling auto par effectif).
+const MAP_SIZES = [
+  { scale: 0.75, label: 'Compact' },
+  { scale: 1, label: 'Normale' },
+  { scale: 1.3, label: 'Grande' },
+  { scale: 1.6, label: 'Immense' },
+];
 
 // Modal de configuration d'une partie personnalisée. Produit une `config` que
 // le serveur valide/borne via buildCustomMode (cf. shared/modes.js).
@@ -42,6 +51,7 @@ export default function CustomGameModal({ onClose, onCreate }) {
   const [lives, setLives] = useState(3);
   const [killTarget, setKillTarget] = useState(15);
   const [respawnSec, setRespawnSec] = useState(3);
+  const [mapScale, setMapScale] = useState(1);
   const [waitForFull, setWaitForFull] = useState(true);
   const [autoBalance, setAutoBalance] = useState(true);
   const [borderMap, setBorderMap] = useState(true);
@@ -49,6 +59,7 @@ export default function CustomGameModal({ onClose, onCreate }) {
   const total = format === 'ffa' ? playerCount : teamCount * teamSize;
   const tooMany = total > 32;
   const isFrags = objective === 'deathmatch';
+  const arenaPreview = arenaForPlayers(Math.max(2, Math.min(32, total)), mapScale);
 
   function submit() {
     if (tooMany) return;
@@ -57,7 +68,7 @@ export default function CustomGameModal({ onClose, onCreate }) {
       objective,
       playerCount, teamCount, teamSize,
       durationSec, lives, waitForFull,
-      killTarget, respawnSec,
+      killTarget, respawnSec, mapScale,
       autoBalance: format === 'team' ? autoBalance : true,
       borderMap: isFrags ? false : borderMap, // Frags incompatible zone toxique
     });
@@ -108,6 +119,19 @@ export default function CustomGameModal({ onClose, onCreate }) {
           <div className="cg-seg sm">
             {DURATIONS.map(d => (
               <button type="button" key={d.sec} className={durationSec === d.sec ? 'active' : ''} onClick={() => setDurationSec(d.sec)}>{d.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Taille de l'arène */}
+        <div className="cg-field">
+          <div className="cg-field-label">
+            Taille de l&apos;arène
+            <span className="cg-hint">{arenaPreview.COLS}×{arenaPreview.ROWS} cases · plus de monde = plus grand</span>
+          </div>
+          <div className="cg-seg sm">
+            {MAP_SIZES.map(m => (
+              <button type="button" key={m.scale} className={mapScale === m.scale ? 'active' : ''} onClick={() => setMapScale(m.scale)}>{m.label}</button>
             ))}
           </div>
         </div>
