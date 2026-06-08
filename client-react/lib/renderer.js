@@ -1,4 +1,4 @@
-import { ARENA, PLAYER, SONAR, PROJECTILE, WALL } from './constants';
+import { ARENA, PLAYER, SONAR, PROJECTILE, WALL, BONUS } from './constants';
 
 const DEFAULT_TEAM_COLORS = ['0,255,255', '255,0,255']; // équipe 0 cyan, 1 magenta
 
@@ -28,6 +28,7 @@ export class GameRenderer {
     this._lastTs = 0;
     this._hitFlash = [];
     this._hitReveals = [];   // marqueurs « tu as touché ici » (cibles hors-vue)
+    this._nukeFx = null;     // flash plein écran d'une nuke
     this._lastWalls = null;
 
     // Interpolation : on bufferise les snapshots serveur et on rend avec un
@@ -123,8 +124,10 @@ export class GameRenderer {
     if (dx !== 0 && dy !== 0) { dx /= Math.SQRT2; dy /= Math.SQRT2; }
     if (dx !== 0 || dy !== 0) this._pred.angle = Math.atan2(dy, dx);
 
-    let nx = this._pred.x + dx * PLAYER.SPEED * dt;
-    let ny = this._pred.y + dy * PLAYER.SPEED * dt;
+    // Bonus vitesse : même multiplicateur que le serveur pour rester synchro.
+    const speed = PLAYER.SPEED * (me.fx?.speed ? BONUS.TYPES.speed.mult : 1);
+    let nx = this._pred.x + dx * speed * dt;
+    let ny = this._pred.y + dy * speed * dt;
     nx = Math.max(PLAYER.RADIUS, Math.min(this.arena.WIDTH - PLAYER.RADIUS, nx));
     ny = Math.max(PLAYER.RADIUS, Math.min(this.arena.HEIGHT - PLAYER.RADIUS, ny));
     // Collision axe par axe, exactement comme le serveur (murs désactivés en mort subite).
@@ -266,6 +269,8 @@ export class GameRenderer {
     if (this._hitReveals.length > 12) this._hitReveals.shift();
   }
 
+  triggerNuke(x, y) { this._nukeFx = { x, y, start: Date.now() }; }
+
   // Lance la célébration de l'équipe gagnante (à la dernière position connue
   // d'un de ses joueurs).
   startCelebration(winnerTeam) {
@@ -393,12 +398,14 @@ export class GameRenderer {
     if (s.zone) this._drawZone(ctx, s, now);
 
     // ——— 4. Éléments nets par-dessus le fog ———
+    this._drawBonuses(ctx, s, now);
     this._drawSonarWaves(ctx, s, now);
     this._drawProjectiles(ctx, s);
     this._drawEnemies(ctx, s, now);
     this._drawTeammates(ctx, s, now);
     this._drawSelf(ctx, s, now);
     this._drawHitReveals(ctx, now);
+    this._drawNuke(ctx, now);
 
     // ——— 5. Cadre + vignette + alerte gaz ———
     this._drawFrame(now);
@@ -740,6 +747,32 @@ export class GameRenderer {
     ctx.strokeStyle = `rgba(${color},1)`;
     ctx.stroke();
 
+    // Effets de bonus actifs (rendus dans le repère translaté de l'entité).
+    if (p.fx) {
+      if (p.fx.shield) {
+        ctx.save();
+        ctx.rotate(now / 600);
+        ctx.strokeStyle = 'rgba(140,205,255,0.95)';
+        ctx.lineWidth = 2; ctx.shadowColor = 'rgba(140,205,255,0.85)'; ctx.shadowBlur = 12;
+        ctx.beginPath();
+        const rr = PLAYER.RADIUS + 9;
+        for (let i = 0; i < 6; i++) {
+          const a = i * (Math.PI / 3), hx = Math.cos(a) * rr, hy = Math.sin(a) * rr;
+          i ? ctx.lineTo(hx, hy) : ctx.moveTo(hx, hy);
+        }
+        ctx.closePath(); ctx.stroke();
+        ctx.restore();
+      }
+      const buff = p.fx.burst ? '255,210,0' : p.fx.rapid ? '255,130,40' : p.fx.speed ? '0,230,255' : null;
+      if (buff) {
+        ctx.save();
+        ctx.strokeStyle = `rgba(${buff},${0.45 + 0.3 * Math.sin(now / 120)})`;
+        ctx.lineWidth = 2; ctx.shadowColor = `rgba(${buff},0.7)`; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(0, 0, PLAYER.RADIUS + 12, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     if (self && p.lastPingTime) {
       const cd = Math.min((now - p.lastPingTime) / SONAR.COOLDOWN_MS, 1);
       if (cd < 1) {
@@ -751,6 +784,75 @@ export class GameRenderer {
         ctx.stroke();
       }
     }
+    ctx.restore();
+  }
+
+  // Bonus ramassables : orbe en losange lumineux + icône, halo pulsé, pop à
+  // l'apparition, anneau-balise au début et clignotement en fin de vie.
+  _drawBonuses(ctx, s, now) {
+    if (!s.bonuses || !s.bonuses.length) return;
+    ctx.save();
+    for (const b of s.bonuses) {
+      const def = BONUS.TYPES[b.type];
+      if (!def) continue;
+      const col = def.color;
+      const age = now - b.spawnAt;
+      const remaining = BONUS.LIFETIME_MS - age;
+      if (remaining < 3000 && Math.floor(now / 180) % 2 === 0) continue; // clignote avant disparition
+      const pop = Math.min(1, age / 300);
+      const pulse = 0.5 + 0.5 * Math.sin(now / 300);
+      const r = BONUS.RADIUS * (0.6 + 0.4 * pop);
+
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      // halo
+      const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.4);
+      halo.addColorStop(0, `rgba(${col},${0.32 + 0.16 * pulse})`);
+      halo.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(0, 0, r * 2.4, 0, Math.PI * 2); ctx.fill();
+      // orbe losange
+      ctx.scale(pop, pop);
+      ctx.shadowColor = `rgba(${col},0.9)`; ctx.shadowBlur = 16;
+      ctx.fillStyle = `rgba(${col},0.92)`;
+      ctx.beginPath();
+      ctx.moveTo(0, -r); ctx.lineTo(r, 0); ctx.lineTo(0, r); ctx.lineTo(-r, 0); ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0; ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
+      // icône
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 15px Orbitron, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(def.icon, 0, 1);
+      ctx.restore();
+
+      // anneau-balise au début (attire l'œil de tous)
+      if (age < 1600) {
+        const t = age / 1600;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, r + t * 32, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${col},${(1 - t) * 0.8})`;
+        ctx.lineWidth = 2; ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // Nuke : flash plein écran vert acide + onde de choc géante depuis l'épicentre.
+  _drawNuke(ctx, now) {
+    if (!this._nukeFx) return;
+    const el = now - this._nukeFx.start;
+    const DUR = 1100;
+    if (el >= DUR) { this._nukeFx = null; return; }
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT, t = el / DUR;
+    const flash = Math.max(0, 1 - el / 260);
+    if (flash > 0) { ctx.fillStyle = `rgba(205,255,170,${0.75 * flash})`; ctx.fillRect(0, 0, W, H); }
+    const { x, y } = this._nukeFx;
+    ctx.save();
+    ctx.strokeStyle = `rgba(150,255,90,${(1 - t) * 0.9})`;
+    ctx.lineWidth = 6 * (1 - t) + 1;
+    ctx.shadowColor = 'rgba(150,255,90,0.85)'; ctx.shadowBlur = 26;
+    ctx.beginPath(); ctx.arc(x, y, t * Math.hypot(W, H), 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
 

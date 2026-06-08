@@ -105,4 +105,36 @@ export const audio = {
     setTimeout(() => [1046.5, 1318.5, 1568].forEach(f => tone(f, 0.9, 'triangle', 0.13)), 470);
   },
   lose()  { [523, 415, 330, 220].forEach((f, i) => setTimeout(() => tone(f, 0.4, 'sawtooth', 0.2), i * 130)); },
+
+  // Un bonus apparaît : petit signal cristallin à deux notes (attire l'attention).
+  bonusAppear() {
+    [784, 1175].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.14), i * 90));
+  },
+  // Tu ramasses un bonus : arpège ascendant brillant.
+  bonusPickup() {
+    [659, 880, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.16, 'triangle', 0.2), i * 70));
+  },
+  // Nuke : flash sonore massif (bruit + chute de basse profonde).
+  nuke() {
+    const ctx = getCtx();
+    const t = ctx.currentTime;
+    const len = Math.floor(ctx.sampleRate * 0.6);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const noise = ctx.createBufferSource(); noise.buffer = buf;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0.6, t);
+    nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    noise.connect(nGain); nGain.connect(ctx.destination); noise.start(t);
+
+    const osc = ctx.createOscillator(); const oGain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(28, t + 0.8);
+    oGain.gain.setValueAtTime(0.5, t);
+    oGain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    osc.connect(oGain); oGain.connect(ctx.destination);
+    osc.start(t); osc.stop(t + 0.9);
+  },
 };

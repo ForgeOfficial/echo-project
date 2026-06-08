@@ -36,6 +36,23 @@ export const WALL = {
   PAD: 3,
 };
 
+// Bonus ramassables — doit rester identique à shared/constants.js.
+export const BONUS = {
+  RADIUS: 15,
+  LIFETIME_MS: 18000,
+  SPAWN_INTERVAL_MS: 14000,
+  MAX_ON_MAP: 3,
+  TYPES: {
+    burst:  { label: 'Rafale',   icon: '⚡', color: '255,210,0',   kind: 'timed',   dur: 8000 },
+    life:   { label: 'Vie +1',   icon: '✚', color: '255,70,90',    kind: 'instant' },
+    speed:  { label: 'Vitesse',  icon: '»',  color: '0,230,255',   kind: 'timed',   dur: 6000, mult: 1.4 },
+    shield: { label: 'Bouclier', icon: '◈',  color: '120,200,255', kind: 'timed',   dur: 4000 },
+    rapid:  { label: 'Cadence',  icon: '⟫', color: '255,130,40',   kind: 'timed',   dur: 8000, mult: 0.4 },
+    nuke:   { label: 'Nuke',     icon: '☢', color: '150,255,90',   kind: 'instant', deathmatchOnly: true },
+  },
+};
+export const BONUS_TYPE_IDS = Object.keys(BONUS.TYPES);
+
 // Doit rester identique à shared/constants.js (interest management serveur ↔ rendu).
 export const VISION = {
   VIEW_RADIUS: 230,
@@ -78,6 +95,9 @@ export const EV = {
   QUEUE_LEAVE:     'queue:leave',
   QUEUE_STATUS:    'queue:status',
   PLAYER_HIT:      'player:hit',
+  BONUS_SPAWN:     'bonus:spawn',
+  BONUS_PICKUP:    'bonus:pickup',
+  NUKE:            'bonus:nuke',
   JOIN_GAME:       'game:join',
   GAME_JOINED:     'game:joined',
   GAME_NOT_FOUND:  'game:not-found',

@@ -1,4 +1,4 @@
-const { PLAYER, SONAR, PROJECTILE, WALL, VISION, GAME } = require('../../../shared/constants');
+const { PLAYER, SONAR, PROJECTILE, WALL, BONUS, VISION, GAME } = require('../../../shared/constants');
 const { MODES, arenaForPlayers } = require('../../../shared/modes');
 
 // Zone toxique (border map) : rectangle central qui rétrécit avec le temps.
@@ -28,6 +28,12 @@ class GameEngine {
     this.deathmatch = mode.objective === 'deathmatch';
     this.killTarget = mode.killTarget || 0;
     this.respawnMs = mode.respawnMs || 3000;
+    // Bonus ramassables : config issue du mode. Désactivés si aucun type retenu.
+    this.bonusCfg = mode.bonus || { enabled: false, types: [], intervalMs: BONUS.SPAWN_INTERVAL_MS, maxOnMap: BONUS.MAX_ON_MAP };
+    this.bonusEnabled = !!this.bonusCfg.enabled && (this.bonusCfg.types || []).length > 0;
+    this.bonuses = [];
+    this._bonusIdSeq = 0;
+    this._nextBonusAt = 0;
 
     // Arène dimensionnée selon le nombre de joueurs (source partagée), avec un
     // multiplicateur de taille optionnel (parties custom).
@@ -134,6 +140,8 @@ class GameEngine {
       exposedUntil: 0,
       gasAccum: 0,
       respawnAt: 0,   // mode Frags : timestamp de réapparition quand hp<=0
+      // Effets de bonus actifs (timestamps de fin ; 0 = inactif).
+      fx: { speedUntil: 0, burstUntil: 0, rapidUntil: 0, shieldUntil: 0 },
     });
   }
 
@@ -141,6 +149,8 @@ class GameEngine {
     this.startTime = Date.now();
     this.endTime = this.startTime + this.durationMs;
     if (this.borderMapEnabled) this._updateZone(this.startTime);
+    // Premier bonus un peu plus tôt que l'intervalle plein.
+    if (this.bonusEnabled) this._nextBonusAt = this.startTime + Math.round(this.bonusCfg.intervalMs * 0.5);
   }
 
   handleInput(playerIndex, inputs) {
@@ -176,21 +186,32 @@ class GameEngine {
     const p = this.players[playerIndex];
     if (!p || p.hp <= 0) return null; // un joueur mort ne peut plus tirer
     const now = Date.now();
+    // Bonus actifs : cadence (cooldown réduit) et rafale (3 projectiles en éventail).
+    const rapid = now < p.fx.rapidUntil;
+    const burst = now < p.fx.burstUntil;
+    const cd = rapid ? PROJECTILE.COOLDOWN_MS * BONUS.TYPES.rapid.mult : PROJECTILE.COOLDOWN_MS;
+    if (now - p.lastShotTime < cd) return null;
     const myProjectiles = this.projectiles.filter(pr => pr.playerIndex === playerIndex);
-    if (now - p.lastShotTime < PROJECTILE.COOLDOWN_MS) return null;
-    if (myProjectiles.length >= PROJECTILE.MAX_ACTIVE) return null;
+    const maxActive = PROJECTILE.MAX_ACTIVE + (burst ? 3 : 0);
+    if (myProjectiles.length >= maxActive) return null;
     p.lastShotTime = now;
     this.stats[playerIndex].shots++;
-    const proj = {
-      id: this._projIdSeq++,
-      x: p.x + Math.cos(p.angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2),
-      y: p.y + Math.sin(p.angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2),
-      vx: Math.cos(p.angle) * PROJECTILE.SPEED,
-      vy: Math.sin(p.angle) * PROJECTILE.SPEED,
-      playerIndex,
-    };
-    this.projectiles.push(proj);
-    return proj;
+    const spread = burst ? [0, -0.22, 0.22] : [0];
+    let first = null;
+    for (const da of spread) {
+      const ang = p.angle + da;
+      const proj = {
+        id: this._projIdSeq++,
+        x: p.x + Math.cos(ang) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2),
+        y: p.y + Math.sin(ang) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2),
+        vx: Math.cos(ang) * PROJECTILE.SPEED,
+        vy: Math.sin(ang) * PROJECTILE.SPEED,
+        playerIndex,
+      };
+      this.projectiles.push(proj);
+      if (!first) first = proj;
+    }
+    return first;
   }
 
   tick(dtMs) {
@@ -204,8 +225,10 @@ class GameEngine {
     }
 
     if (this.deathmatch) this._updateRespawns(now);
+    if (this.bonusEnabled && !this.suddenDeath) this._updateBonuses(now);
     this._updatePlayers(dt, now);
     this._updateProjectiles(dt, now);
+    if (this.over) return null; // un ramassage (nuke) peut terminer la partie
     if (this.borderMapEnabled && !this.suddenDeath) {
       this._updateZone(now);
       this._applyGas(dt, now);
@@ -224,6 +247,7 @@ class GameEngine {
     this._wallSet = new Set();
     this.sonarWaves = [];
     this.zone = null;
+    this.bonuses = []; // pas de bonus pendant la mort subite (1 coup = victoire)
     this.players.forEach(p => { p.exposed = false; });
   }
 
@@ -277,8 +301,9 @@ class GameEngine {
       if (dx !== 0 || dy !== 0) {
         p.angle = Math.atan2(dy, dx);
       }
-      const newX = p.x + dx * PLAYER.SPEED * dt;
-      const newY = p.y + dy * PLAYER.SPEED * dt;
+      const speed = PLAYER.SPEED * (now < p.fx.speedUntil ? BONUS.TYPES.speed.mult : 1);
+      const newX = p.x + dx * speed * dt;
+      const newY = p.y + dy * speed * dt;
       const clampedX = Math.max(PLAYER.RADIUS, Math.min(A.WIDTH - PLAYER.RADIUS, newX));
       const clampedY = Math.max(PLAYER.RADIUS, Math.min(A.HEIGHT - PLAYER.RADIUS, newY));
       // collision murs + collision avec un autre joueur (pas de chevauchement)
@@ -407,6 +432,7 @@ class GameEngine {
     p.respawnAt = 0;
     p.gasAccum = 0;
     p.exposed = false;
+    p.fx = { speedUntil: 0, burstUntil: 0, rapidUntil: 0, shieldUntil: 0 }; // les effets ne survivent pas à la mort
     p.invincibleUntil = now + Math.max(PLAYER.INVINCIBILITY_MS, 1500); // grâce d'apparition
     p.angle = Math.atan2(this.arena.HEIGHT / 2 - p.y, this.arena.WIDTH / 2 - p.x);
     this._events.push({ type: 'respawn', playerIndex: idx });
@@ -431,6 +457,95 @@ class GameEngine {
       if (nearest > 320) break; // assez loin, on s'arrête
     }
     return best || { x: forPlayer.x, y: forPlayer.y };
+  }
+
+  // ——— BONUS ramassables ———
+  _updateBonuses(now) {
+    // Expiration des bonus non ramassés.
+    if (this.bonuses.length) this.bonuses = this.bonuses.filter(b => now - b.spawnAt < BONUS.LIFETIME_MS);
+    // Apparition (annoncée à tous via l'event 'bonusSpawn').
+    if (this.bonuses.length < this.bonusCfg.maxOnMap && now >= this._nextBonusAt) {
+      this._spawnBonus(now);
+      const jitter = 0.8 + Math.random() * 0.4;
+      this._nextBonusAt = now + Math.round(this.bonusCfg.intervalMs * jitter);
+    }
+    // Ramassage : un joueur vivant qui touche le pickup déclenche l'effet.
+    for (let bi = this.bonuses.length - 1; bi >= 0; bi--) {
+      const b = this.bonuses[bi];
+      for (let pi = 0; pi < this.players.length; pi++) {
+        const p = this.players[pi];
+        if (!p || p.hp <= 0) continue;
+        if (Math.hypot(p.x - b.x, p.y - b.y) < BONUS.RADIUS + PLAYER.RADIUS) {
+          this.bonuses.splice(bi, 1);
+          this._applyBonus(pi, b, now);
+          break;
+        }
+      }
+      if (this.over) return;
+    }
+  }
+
+  _spawnBonus(now) {
+    const type = this._randomBonusType();
+    if (!type) return;
+    const cell = this._pickBonusCell();
+    if (!cell) return;
+    const b = { id: this._bonusIdSeq++, type, x: cell.x, y: cell.y, spawnAt: now };
+    this.bonuses.push(b);
+    this._events.push({ type: 'bonusSpawn', bonus: { id: b.id, type, x: b.x, y: b.y } });
+  }
+
+  _randomBonusType() {
+    const types = this.bonusCfg.types;
+    if (!types || !types.length) return null;
+    return types[Math.floor(Math.random() * types.length)];
+  }
+
+  _pickBonusCell() {
+    const S = this.arena.CELL_SIZE, cols = this.arena.COLS, rows = this.arena.ROWS;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const c = 1 + Math.floor(Math.random() * (cols - 2));
+      const r = 1 + Math.floor(Math.random() * (rows - 2));
+      if (this._wallSet.has(`${c},${r}`)) continue;
+      const x = c * S + S / 2, y = r * S + S / 2;
+      if (this.bonuses.some(b => Math.hypot(b.x - x, b.y - y) < S * 2)) continue; // espacement
+      return { x, y };
+    }
+    return null;
+  }
+
+  _applyBonus(pi, b, now) {
+    const p = this.players[pi];
+    if (!p) return;
+    switch (b.type) {
+      case 'life':   p.hp = Math.min(this.maxHp + 2, p.hp + 1); break;
+      case 'speed':  p.fx.speedUntil = now + BONUS.TYPES.speed.dur; break;
+      case 'burst':  p.fx.burstUntil = now + BONUS.TYPES.burst.dur; break;
+      case 'rapid':  p.fx.rapidUntil = now + BONUS.TYPES.rapid.dur; break;
+      case 'shield':
+        p.fx.shieldUntil = now + BONUS.TYPES.shield.dur;
+        p.invincibleUntil = Math.max(p.invincibleUntil, p.fx.shieldUntil);
+        break;
+      case 'nuke':   this._detonateNuke(pi, now); break;
+    }
+    this._events.push({ type: 'bonusPickup', playerIndex: pi, bonus: b.type });
+  }
+
+  // Nuke (Frags) : élimine d'un coup tous les adversaires vivants (un bouclier
+  // protège). Chaque mort passe par _onKill → crédite les frags et peut clore la partie.
+  _detonateNuke(killerIdx, now) {
+    const killer = this.players[killerIdx];
+    if (!killer) return;
+    this._events.push({ type: 'nuke', x: killer.x, y: killer.y, by: killerIdx });
+    for (let ti = 0; ti < this.players.length; ti++) {
+      const t = this.players[ti];
+      if (!t || t.hp <= 0 || t.team === killer.team) continue;
+      if (now <= t.invincibleUntil) continue; // bouclier / invincibilité → épargné
+      t.hp = 0;
+      this._events.push({ type: 'hit', victim: ti, by: killerIdx, x: t.x, y: t.y });
+      this._onKill(killerIdx, ti, now);
+      if (this.over) return;
+    }
   }
 
   // Partie terminée s'il ne reste qu'une équipe (ou zéro) avec des joueurs en vie.
@@ -564,8 +679,19 @@ class GameEngine {
     };
 
     const seen = (this._lastSeen[observerIndex] || (this._lastSeen[observerIndex] = {}));
+    // Effets de bonus actifs → ms restantes par effet (rendu + HUD). Omis si vide.
+    const fxOf = (p) => {
+      const s = p.fx, f = {};
+      if (now < s.shieldUntil) f.shield = s.shieldUntil - now;
+      if (now < s.speedUntil)  f.speed  = s.speedUntil - now;
+      if (now < s.burstUntil)  f.burst  = s.burstUntil - now;
+      if (now < s.rapidUntil)  f.rapid  = s.rapidUntil - now;
+      return f;
+    };
     const full = (p, withPing) => {
       const o = { x: p.x, y: p.y, angle: p.angle, hp: p.hp, team: p.team, exposed: p.exposed };
+      const f = fxOf(p);
+      if (Object.keys(f).length) o.fx = f;
       if (withPing) {
         o.lastPingTime = p.lastPingTime;   // utile seulement pour soi (anneau de cooldown)
         // Frags : temps restant avant réapparition (ms relatif → insensible au
@@ -625,6 +751,9 @@ class GameEngine {
         .filter(w => this.players[w.playerIndex])
         .map(w => ({ id: w.id, x: w.x, y: w.y, startTime: w.startTime, playerIndex: w.playerIndex })),
       zone: this.zone,
+      // Bonus visibles de tous (l'annonce passe par un event, mais le pickup
+      // reste affiché sur la carte pour que chacun puisse aller le chercher).
+      bonuses: this.bonuses.map(b => ({ id: b.id, type: b.type, x: b.x, y: b.y, spawnAt: b.spawnAt })),
       timeLeft: Math.max(0, this.endTime - now),
       suddenDeath: sd,
     };

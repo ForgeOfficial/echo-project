@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { GameRenderer } from '../lib/renderer';
-import { EV, ARENA, PLAYER, PROJECTILE, SONAR } from '../lib/constants';
+import { EV, ARENA, PLAYER, PROJECTILE, SONAR, BONUS } from '../lib/constants';
 import { arenaForPlayers } from '../lib/modes';
 import { audio } from '../lib/audio';
 import TouchControls from './TouchControls';
@@ -21,6 +21,12 @@ export default function GameCanvas({ matchData, initialState }) {
   const [hudState, setHudState] = useState({ players: [], timeLeft: matchData?.mode?.durationMs ?? 180000, matchInfo: null });
   const audioUnlockedRef = useRef(false);
   const aliveRef = useRef(true);
+  // Garde de cooldown local (mêmes durées que le serveur) : évite de jouer le
+  // son / d'émettre quand l'action sera de toute façon rejetée pour cooldown.
+  const lastPingRef = useRef(0);
+  const lastShootRef = useRef(0);
+  const myFxRef = useRef(null);            // effets actifs du joueur local (cadence de tir)
+  const [bonusAnnounce, setBonusAnnounce] = useState(null); // bannière « bonus apparu »
 
   // Arène dimensionnée selon le nombre de joueurs (même formule que le serveur),
   // avec le multiplicateur de taille du mode (parties custom).
@@ -78,16 +84,30 @@ export default function GameCanvas({ matchData, initialState }) {
     touchRef.current = dirs;
     sendInputIfChanged();
   }, []); // sendInputIfChanged est stable (deps stables) ; défini plus bas via hoisting de useCallback
-  const handleTouchShoot = useCallback(() => {
+  // Ping / tir gardés par le cooldown : on n'émet (et ne joue le son) que si
+  // l'action est réellement disponible. Le serveur reste l'autorité, mais comme
+  // les durées sont identiques, ce garde élimine les sons « à vide ».
+  const tryPing = useCallback(() => {
     if (!aliveRef.current) return;
-    socket.current?.emit(EV.PLAYER_SHOOT);
-    if (audioUnlockedRef.current) audio.shoot();
-  }, [socket]);
-  const handleTouchPing = useCallback(() => {
-    if (!aliveRef.current) return;
+    const now = Date.now();
+    if (now - lastPingRef.current < SONAR.COOLDOWN_MS) return;
+    lastPingRef.current = now;
     socket.current?.emit(EV.PLAYER_PING);
     if (audioUnlockedRef.current) audio.ping();
   }, [socket]);
+  const tryShoot = useCallback(() => {
+    if (!aliveRef.current) return;
+    const now = Date.now();
+    // Bonus cadence : cooldown réduit côté client aussi, sinon le garde local
+    // throttlerait le tir rapide autorisé par le serveur.
+    const cd = myFxRef.current?.rapid ? PROJECTILE.COOLDOWN_MS * BONUS.TYPES.rapid.mult : PROJECTILE.COOLDOWN_MS;
+    if (now - lastShootRef.current < cd) return;
+    lastShootRef.current = now;
+    socket.current?.emit(EV.PLAYER_SHOOT);
+    if (audioUnlockedRef.current) audio.shoot();
+  }, [socket]);
+  const handleTouchShoot = tryShoot;
+  const handleTouchPing = tryPing;
 
   const buildInputs = useCallback(() => {
     const k = keysRef.current, t = touchRef.current;
@@ -144,7 +164,7 @@ export default function GameCanvas({ matchData, initialState }) {
     const onState = (state) => {
       rendererRef.current?.setState({ ...state, walls: wallsRef.current });
       const me = state.players?.[myIdxRef.current];
-      if (me) aliveRef.current = me.hp > 0;
+      if (me) { aliveRef.current = me.hp > 0; myFxRef.current = me.fx || null; }
       setHudState(h => ({ ...h, players: state.players || [], timeLeft: state.timeLeft, suddenDeath: state.suddenDeath }));
     };
     const onHit = ({ playerIndex, by, x, y }) => {
@@ -159,17 +179,39 @@ export default function GameCanvas({ matchData, initialState }) {
         if (x != null && y != null) rendererRef.current?.triggerHitReveal(playerIndex, x, y);
       }
     };
+    const onBonusSpawn = (bonus) => {
+      setBonusAnnounce({ ...bonus, key: bonus.id });
+      if (audioUnlockedRef.current) audio.bonusAppear();
+    };
+    const onBonusPickup = () => { if (audioUnlockedRef.current) audio.bonusPickup(); };
+    const onNuke = ({ x, y }) => {
+      rendererRef.current?.triggerNuke(x, y);
+      if (audioUnlockedRef.current) audio.nuke();
+    };
     // La fin de partie (GAME_END) est gérée au niveau de la page /games/:id :
     // elle démonte GameCanvas, ce qui stoppe le renderer via le cleanup.
     s.on(EV.GAME_FULL_STATE, onFullState);
     s.on(EV.GAME_STATE, onState);
     s.on(EV.PLAYER_HIT, onHit);
+    s.on(EV.BONUS_SPAWN, onBonusSpawn);
+    s.on(EV.BONUS_PICKUP, onBonusPickup);
+    s.on(EV.NUKE, onNuke);
     return () => {
       s.off(EV.GAME_FULL_STATE, onFullState);
       s.off(EV.GAME_STATE, onState);
       s.off(EV.PLAYER_HIT, onHit);
+      s.off(EV.BONUS_SPAWN, onBonusSpawn);
+      s.off(EV.BONUS_PICKUP, onBonusPickup);
+      s.off(EV.NUKE, onNuke);
     };
   }, [socket, playDamageFx]);
+
+  // Auto-effacement de la bannière d'annonce de bonus.
+  useEffect(() => {
+    if (!bonusAnnounce) return;
+    const t = setTimeout(() => setBonusAnnounce(null), 2800);
+    return () => clearTimeout(t);
+  }, [bonusAnnounce]);
 
   useEffect(() => {
     // Touches qui font défiler la page par défaut → on bloque le scroll,
@@ -182,15 +224,8 @@ export default function GameCanvas({ matchData, initialState }) {
       if (SCROLL_KEYS.has(e.code)) e.preventDefault();
       if (keysRef.current[e.code]) return;
       keysRef.current[e.code] = true;
-      if (e.code === 'Space' && aliveRef.current) {
-        socket.current?.emit(EV.PLAYER_PING);
-        if (audioUnlockedRef.current) audio.ping();
-      }
-      if ((e.code === 'KeyF' || e.code === 'Enter') && aliveRef.current) {
-        e.preventDefault();
-        socket.current?.emit(EV.PLAYER_SHOOT);
-        if (audioUnlockedRef.current) audio.shoot();
-      }
+      if (e.code === 'Space') tryPing();
+      if (e.code === 'KeyF' || e.code === 'Enter') { e.preventDefault(); tryShoot(); }
       sendInputIfChanged();
     };
     const onKeyUp = (e) => {
@@ -203,7 +238,7 @@ export default function GameCanvas({ matchData, initialState }) {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [socket, sendInputIfChanged, unlockAudio]);
+  }, [socket, sendInputIfChanged, unlockAudio, tryPing, tryShoot]);
 
   // Mise à l'échelle du stage pour qu'il tienne toujours dans la fenêtre
   // (évite que l'arène déborde sous le fold → fausse impression de "sortie de map")
@@ -244,6 +279,10 @@ export default function GameCanvas({ matchData, initialState }) {
   const me = players[myIdxRef.current];
   const respawnSecLeft = isFrags && me && me.hp <= 0 && me.respawnIn != null
     ? Math.ceil(me.respawnIn / 1000) : 0;
+  // Effets de bonus actifs du joueur local (icône + secondes restantes).
+  const activeEffects = me?.fx
+    ? Object.keys(me.fx).filter(k => me.fx[k] > 0 && BONUS.TYPES[k]).map(k => ({ key: k, ms: me.fx[k], def: BONUS.TYPES[k] }))
+    : [];
   // Cumul de kills par équipe (= par joueur en FFA) pour le tableau de scores.
   const teamKills = isFrags
     ? roster.reduce((acc, p, idx) => {
@@ -260,19 +299,28 @@ export default function GameCanvas({ matchData, initialState }) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   };
 
+  // Pastilles de PV avec gestion de la surcharge (Vie+ peut dépasser maxHp → dots dorés).
+  const hpDots = (hp, col) => {
+    const count = Math.max(maxHp, hp);
+    return Array.from({ length: count }).map((_, i) => {
+      const filled = i < hp;
+      const over = i >= maxHp; // pastille de surcharge (bonus Vie+)
+      const c = over ? '#FFD700' : col;
+      return (
+        <span key={i} className="hp-dot" style={filled
+          ? { background: c, border: `1px solid ${c}`, boxShadow: `0 0 8px ${c}` }
+          : { background: 'transparent', border: `1px solid ${c}`, opacity: 0.3 }} />
+      );
+    });
+  };
+
   const renderMember = (m) => {
     const hp = players[m.idx]?.hp ?? maxHp;
     const col = `rgb(${teamColors[m.team] ?? teamColors[0]})`;
     return (
       <div key={m.idx} className={`hud-member${hp <= 0 ? ' dead' : ''}`}>
         <span className="hud-name" style={{ color: col }}>{m.pseudo ?? 'Joueur'}</span>
-        <div className="hud-hp">
-          {Array.from({ length: maxHp }).map((_, i) => (
-            <span key={i} className="hp-dot" style={i < hp
-              ? { background: col, border: `1px solid ${col}`, boxShadow: `0 0 8px ${col}` }
-              : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
-          ))}
-        </div>
+        <div className="hud-hp">{hpDots(hp, col)}</div>
         {isFrags && <span className="hud-kills" style={{ color: col }}>{players[m.idx]?.kills || 0}<small>☠</small></span>}
         {!isFrags && teamSize === 1 && !manyTeams && m.elo != null && <span className="hud-elo-badge">{m.elo}</span>}
       </div>
@@ -292,13 +340,7 @@ export default function GameCanvas({ matchData, initialState }) {
             <div key={m.idx} className={`hud-chip${hp <= 0 ? ' dead' : ''}${m.idx === myIdxRef.current ? ' me' : ''}`} style={{ borderColor: col }}>
               <span className="hud-chip-dot" style={{ background: col, boxShadow: `0 0 8px ${col}` }} />
               <span className="hud-chip-name" style={{ color: col }}>{m.pseudo ?? `J${m.idx + 1}`}</span>
-              <div className="hud-hp">
-                {Array.from({ length: maxHp }).map((_, i) => (
-                  <span key={i} className="hp-dot" style={i < hp
-                    ? { background: col, border: `1px solid ${col}`, boxShadow: `0 0 6px ${col}` }
-                    : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
-                ))}
-              </div>
+              <div className="hud-hp">{hpDots(hp, col)}</div>
               {isFrags && <span className="hud-kills" style={{ color: col }}>{players[m.idx]?.kills || 0}<small>☠</small></span>}
             </div>
           );
@@ -354,6 +396,29 @@ export default function GameCanvas({ matchData, initialState }) {
           {/* overlay de dégâts (flash rouge depuis les bords) */}
           <div ref={dmgRef} className="damage-overlay-fx" />
           {suddenDeath && <div className="sudden-death-banner">MORT SUBITE</div>}
+
+          {/* Annonce « un bonus est apparu » (vue par tous) */}
+          {bonusAnnounce && BONUS.TYPES[bonusAnnounce.type] && (
+            <div key={bonusAnnounce.key} className="bonus-announce" style={{ '--bc': `rgb(${BONUS.TYPES[bonusAnnounce.type].color})` }}>
+              <span className="bonus-announce-icon">{BONUS.TYPES[bonusAnnounce.type].icon}</span>
+              <span className="bonus-announce-txt">
+                <b>{BONUS.TYPES[bonusAnnounce.type].label}</b>
+                <small>apparu sur la carte</small>
+              </span>
+            </div>
+          )}
+
+          {/* Effets de bonus actifs du joueur local */}
+          {activeEffects.length > 0 && (
+            <div className="fx-bar">
+              {activeEffects.map(fx => (
+                <div key={fx.key} className="fx-chip" style={{ borderColor: `rgb(${fx.def.color})`, color: `rgb(${fx.def.color})` }}>
+                  <span className="fx-icon">{fx.def.icon}</span>
+                  <span className="fx-sec">{Math.ceil(fx.ms / 1000)}s</span>
+                </div>
+              ))}
+            </div>
+          )}
           {respawnSecLeft > 0 && (
             <div className="respawn-overlay">
               <div className="respawn-label">ÉLIMINÉ</div>

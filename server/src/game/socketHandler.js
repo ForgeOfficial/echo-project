@@ -312,6 +312,12 @@ function createGame(io, mode, roster) {
           if (idx === e.by) { payload.x = e.x; payload.y = e.y; }
           sock.emit(EV.PLAYER_HIT, payload);
         });
+      } else if (e.type === 'bonusSpawn') {
+        io.to(gameId).emit(EV.BONUS_SPAWN, e.bonus); // annonce globale
+      } else if (e.type === 'bonusPickup') {
+        io.to(gameId).emit(EV.BONUS_PICKUP, { playerIndex: e.playerIndex, bonus: e.bonus });
+      } else if (e.type === 'nuke') {
+        io.to(gameId).emit(EV.NUKE, { x: e.x, y: e.y, by: e.by });
       }
     });
     if (engine.over) { _endGame(io, room, result); return; }

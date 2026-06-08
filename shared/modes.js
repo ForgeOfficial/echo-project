@@ -1,5 +1,24 @@
 // Registre des modes de jeu. Un seul moteur (GameEngine) lit ce descripteur ;
 // ajouter un mode = ajouter une entrée ici (pas de duplication de logique).
+const { BONUS, BONUS_TYPE_IDS } = require('./constants');
+
+// Fréquence d'apparition des bonus (multiplicateur sur l'intervalle de base).
+const BONUS_FREQ = { low: 1.9, normal: 1, high: 0.55 };
+
+// Construit/valide la config de bonus d'un mode. Le type « nuke » n'est gardé
+// qu'en deathmatch (Frags).
+function buildBonusConfig(cfg = {}, deathmatch, { intervalMul = 1, maxOnMap = BONUS.MAX_ON_MAP } = {}) {
+  const enabled = cfg.enabled !== false;
+  let types = Array.isArray(cfg.types) && cfg.types.length ? cfg.types.slice() : BONUS_TYPE_IDS.slice();
+  types = types.filter(t => BONUS.TYPES[t] && (!BONUS.TYPES[t].deathmatchOnly || deathmatch));
+  const freq = BONUS_FREQ[cfg.frequency] || 1;
+  return {
+    enabled: enabled && types.length > 0,
+    types,
+    intervalMs: Math.round(BONUS.SPAWN_INTERVAL_MS * freq * intervalMul),
+    maxOnMap,
+  };
+}
 
 // Palette néon : une couleur par équipe (FFA = une équipe par joueur). Jusqu'à 8.
 const TEAM_PALETTE = [
@@ -54,6 +73,7 @@ function buildCustomMode(config = {}) {
   mapScale = Math.max(0.6, Math.min(1.8, mapScale));
   // En Frags, la zone toxique n'a pas de sens (on réapparaît) → désactivée.
   const borderMap = deathmatch ? false : !!config.borderMap;
+  const bonus = buildBonusConfig(config.bonus, deathmatch);
 
   const MAX_PLAYERS = 32; // borne dure (interest management → scaling ~30j)
   let teamCount, teamSize, totalPlayers;
@@ -97,6 +117,7 @@ function buildCustomMode(config = {}) {
     maxHp: lives,
     durationMs: durationSec * 1000,
     borderMap,
+    bonus,
     waitForFull: config.waitForFull !== false,
     autoBalance: format === 'team' ? config.autoBalance !== false : true,
     teamNames,
@@ -121,6 +142,8 @@ const MODES = {
     maxHp: 3,
     durationMs: 180000,
     borderMap: false,
+    // Set léger sans nuke, fréquence basse, 1 seul à la fois (équité des modes classés).
+    bonus: { enabled: true, types: ['burst', 'life', 'speed', 'shield', 'rapid'], intervalMs: 24000, maxOnMap: 1 },
     waitForFull: true,
     autoBalance: true,
     teamNames: ['Cyan', 'Magenta'],
@@ -142,6 +165,7 @@ const MODES = {
     maxHp: 3,
     durationMs: 180000,
     borderMap: false,
+    bonus: { enabled: true, types: ['burst', 'life', 'speed', 'shield', 'rapid'], intervalMs: 24000, maxOnMap: 1 },
     waitForFull: true,
     autoBalance: false, // 2v2 : choix manuel des équipes (Rouge/Bleu)
     teamNames: ['Rouge', 'Bleu'],

@@ -39,6 +39,25 @@ const WALL = {
   PAD: 3,
 };
 
+// Bonus ramassables qui apparaissent sur la carte. Source partagée client/serveur :
+// le serveur gère apparition/effets, le client dessine et annonce. Chaque type a
+// label/icône/couleur (rendu + annonce) et ses paramètres d'effet.
+const BONUS = {
+  RADIUS: 15,            // demi-taille du pickup ; ramassage si dist < RADIUS + PLAYER.RADIUS
+  LIFETIME_MS: 18000,    // disparaît s'il n'est pas pris
+  SPAWN_INTERVAL_MS: 14000, // cadence de base (modulée par la fréquence du mode)
+  MAX_ON_MAP: 3,
+  TYPES: {
+    burst:  { label: 'Rafale',   icon: '⚡', color: '255,210,0',   kind: 'timed',   dur: 8000 },
+    life:   { label: 'Vie +1',   icon: '✚', color: '255,70,90',    kind: 'instant' },
+    speed:  { label: 'Vitesse',  icon: '»',  color: '0,230,255',   kind: 'timed',   dur: 6000, mult: 1.4 },
+    shield: { label: 'Bouclier', icon: '◈',  color: '120,200,255', kind: 'timed',   dur: 4000 },
+    rapid:  { label: 'Cadence',  icon: '⟫', color: '255,130,40',   kind: 'timed',   dur: 8000, mult: 0.4 },
+    nuke:   { label: 'Nuke',     icon: '☢', color: '150,255,90',   kind: 'instant', deathmatchOnly: true },
+  },
+};
+const BONUS_TYPE_IDS = Object.keys(BONUS.TYPES);
+
 // Interest management (anti-wallhack + scaling) : le serveur ne révèle à chaque
 // joueur que les ennemis qu'il « voit » réellement. Source partagée client/serveur.
 const VISION = {
@@ -91,6 +110,10 @@ const SOCKET_EVENTS = {
   QUEUE_LEAVE: 'queue:leave',
   QUEUE_STATUS: 'queue:status',
   PLAYER_HIT: 'player:hit',
+  // Bonus : apparition (annonce globale), ramassage (effet + son), nuke (flash).
+  BONUS_SPAWN: 'bonus:spawn',
+  BONUS_PICKUP: 'bonus:pickup',
+  NUKE: 'bonus:nuke',
   // (Re)joindre une partie par son UUID : sert au démarrage d'un match comme
   // au retour après une fermeture de page.
   JOIN_GAME: 'game:join',
@@ -109,5 +132,5 @@ const SOCKET_EVENTS = {
 };
 
 if (typeof module !== 'undefined') {
-  module.exports = { ARENA, PLAYER, SONAR, PROJECTILE, WALL, VISION, GAME, ELO, RANKS, SOCKET_EVENTS };
+  module.exports = { ARENA, PLAYER, SONAR, PROJECTILE, WALL, BONUS, BONUS_TYPE_IDS, VISION, GAME, ELO, RANKS, SOCKET_EVENTS };
 }

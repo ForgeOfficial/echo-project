@@ -1,6 +1,13 @@
 'use client';
 import { useState } from 'react';
 import { arenaForPlayers } from '../lib/modes';
+import { BONUS, BONUS_TYPE_IDS } from '../lib/constants';
+
+const BONUS_FREQS = [
+  { v: 'low', label: 'Rares' },
+  { v: 'normal', label: 'Normal' },
+  { v: 'high', label: 'Fréquents' },
+];
 
 // Multiplicateurs de taille d'arène (par-dessus le scaling auto par effectif).
 const MAP_SIZES = [
@@ -55,14 +62,20 @@ export default function CustomGameModal({ onClose, onCreate }) {
   const [waitForFull, setWaitForFull] = useState(true);
   const [autoBalance, setAutoBalance] = useState(true);
   const [borderMap, setBorderMap] = useState(true);
+  const [bonusEnabled, setBonusEnabled] = useState(true);
+  const [bonusFreq, setBonusFreq] = useState('normal');
+  const [bonusSel, setBonusSel] = useState(() => Object.fromEntries(BONUS_TYPE_IDS.map(id => [id, true])));
 
   const total = format === 'ffa' ? playerCount : teamCount * teamSize;
   const tooMany = total > 32;
   const isFrags = objective === 'deathmatch';
   const arenaPreview = arenaForPlayers(Math.max(2, Math.min(32, total)), mapScale);
+  // La nuke n'existe qu'en Frags ; on masque le chip sinon.
+  const availBonusTypes = BONUS_TYPE_IDS.filter(id => !BONUS.TYPES[id].deathmatchOnly || isFrags);
 
   function submit() {
     if (tooMany) return;
+    const types = availBonusTypes.filter(id => bonusSel[id]);
     onCreate({
       format,
       objective,
@@ -71,6 +84,7 @@ export default function CustomGameModal({ onClose, onCreate }) {
       killTarget, respawnSec, mapScale,
       autoBalance: format === 'team' ? autoBalance : true,
       borderMap: isFrags ? false : borderMap, // Frags incompatible zone toxique
+      bonus: { enabled: bonusEnabled && types.length > 0, types, frequency: bonusFreq },
     });
   }
 
@@ -154,7 +168,33 @@ export default function CustomGameModal({ onClose, onCreate }) {
           {!isFrags && (
             <Toggle label="Zone toxique qui rétrécit" checked={borderMap} onChange={setBorderMap} hint="gaz mortel hors de la zone" />
           )}
+          <Toggle label="Bonus sur la carte" checked={bonusEnabled} onChange={setBonusEnabled} hint="objets à ramasser pendant la partie" />
         </div>
+
+        {/* Sélection des bonus + fréquence */}
+        {bonusEnabled && (
+          <div className="cg-field cg-bonus">
+            <div className="cg-bonus-grid">
+              {availBonusTypes.map(id => {
+                const def = BONUS.TYPES[id];
+                const on = bonusSel[id];
+                return (
+                  <button type="button" key={id}
+                    className={`cg-bonus-chip${on ? ' on' : ''}`}
+                    style={on ? { borderColor: `rgb(${def.color})`, color: `rgb(${def.color})`, boxShadow: `0 0 10px rgba(${def.color},0.3)` } : undefined}
+                    onClick={() => setBonusSel(s => ({ ...s, [id]: !s[id] }))}>
+                    <span className="cg-bonus-ic">{def.icon}</span>{def.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="cg-seg sm">
+              {BONUS_FREQS.map(f => (
+                <button type="button" key={f.v} className={bonusFreq === f.v ? 'active' : ''} onClick={() => setBonusFreq(f.v)}>{f.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <button className="btn btn-lg cg-create" onClick={submit} disabled={tooMany}>Créer la partie</button>
       </div>
