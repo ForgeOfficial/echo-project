@@ -140,7 +140,7 @@ class GameEngine {
   handlePing(playerIndex) {
     if (this.suddenDeath) return null; // sonar désactivé en mort subite
     const p = this.players[playerIndex];
-    if (!p) return null;
+    if (!p || p.hp <= 0) return null; // un joueur mort ne peut plus pinger
     const now = Date.now();
     if (now - p.lastPingTime < SONAR.COOLDOWN_MS) return null;
     p.lastPingTime = now;
@@ -161,7 +161,7 @@ class GameEngine {
 
   handleShoot(playerIndex) {
     const p = this.players[playerIndex];
-    if (!p) return null;
+    if (!p || p.hp <= 0) return null; // un joueur mort ne peut plus tirer
     const now = Date.now();
     const myProjectiles = this.projectiles.filter(pr => pr.playerIndex === playerIndex);
     if (now - p.lastShotTime < PROJECTILE.COOLDOWN_MS) return null;
