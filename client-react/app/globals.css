@@ -415,3 +415,199 @@ body::after {
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   CONTRÔLES TACTILES (mobile / tablette)
+   Joystick dynamique à gauche · TIR + ECHO à droite. Thème sonar néon.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Plein écran pendant une partie tactile : la navbar est recouverte, l'arène
+   occupe tout l'espace et les contrôles flottent dans les coins bas. */
+.game-shell.touch {
+  inset: 0;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+@property --tc-ang {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.tc-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  pointer-events: none;            /* seuls les enfants interactifs captent */
+  touch-action: none;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+
+/* —— Zone du joystick : moitié gauche, le stick naît sous le pouce —— */
+.tc-stick-zone {
+  position: absolute;
+  left: 0; bottom: 0;
+  width: 46%; height: 78%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.tc-stick {
+  position: absolute;
+  width: 0; height: 0;
+  transform: translateZ(0);
+}
+.tc-stick-ring,
+.tc-stick-ring--2 {
+  position: absolute; top: 0; left: 0;
+  width: 132px; height: 132px;
+  margin: -66px 0 0 -66px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 255, 255, 0.45);
+  background:
+    radial-gradient(circle at center,
+      rgba(0, 255, 255, 0.10) 0%,
+      rgba(0, 255, 255, 0.04) 45%,
+      transparent 72%);
+  box-shadow: 0 0 22px rgba(0, 255, 255, 0.22), inset 0 0 26px rgba(0, 255, 255, 0.12);
+}
+.tc-stick-ring--2 {
+  width: 168px; height: 168px;
+  margin: -84px 0 0 -84px;
+  border-color: rgba(0, 255, 255, 0.18);
+  background: none;
+  box-shadow: none;
+  animation: tc-sonar-idle 2.4s ease-out infinite;
+}
+@keyframes tc-sonar-idle {
+  0%   { transform: scale(0.78); opacity: 0.55; }
+  100% { transform: scale(1.05); opacity: 0; }
+}
+.tc-stick-cross {
+  position: absolute; top: 0; left: 0;
+  width: 132px; height: 132px;
+  margin: -66px 0 0 -66px;
+  border-radius: 50%;
+  background:
+    linear-gradient(rgba(0,255,255,0.16), rgba(0,255,255,0.16)) center / 1px 56% no-repeat,
+    linear-gradient(rgba(0,255,255,0.16), rgba(0,255,255,0.16)) center / 56% 1px no-repeat;
+}
+.tc-stick-knob {
+  position: absolute; top: 0; left: 0;
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 32%, #d8ffff 0%, var(--cyan) 42%, #0a8a8a 100%);
+  border: 1.5px solid rgba(216, 255, 255, 0.9);
+  box-shadow:
+    0 0 18px rgba(0, 255, 255, 0.85),
+    0 0 40px rgba(0, 255, 255, 0.35),
+    inset 0 -4px 10px rgba(0, 0, 0, 0.35);
+  will-change: transform;
+}
+
+/* —— Boutons d'action : TIR (cyan) + ECHO (magenta) —— */
+.tc-actions {
+  position: absolute;
+  right: max(22px, env(safe-area-inset-right));
+  bottom: max(26px, env(safe-area-inset-bottom));
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: end;
+  gap: 16px;
+}
+
+.tc-btn {
+  position: relative;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 4px;
+  border-radius: 50%;
+  background: rgba(3, 3, 14, 0.55);
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.07s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+}
+.tc-btn:active { transform: scale(0.92); }
+.tc-btn.is-cooling { opacity: 0.55; }
+
+.tc-btn--fire {
+  width: 116px; height: 116px;
+  border: 2px solid var(--cyan);
+  color: var(--cyan);
+  box-shadow: var(--glow-cyan), inset 0 0 24px rgba(0, 255, 255, 0.18);
+  margin-bottom: 6px;          /* le bouton principal, légèrement plus bas */
+}
+.tc-btn--echo {
+  width: 96px; height: 96px;
+  align-self: start;
+  border: 2px solid var(--magenta);
+  color: var(--magenta);
+  box-shadow: var(--glow-mag), inset 0 0 24px rgba(255, 0, 255, 0.18);
+}
+.tc-btn-label { font-size: 0.72rem; font-weight: 700; }
+.tc-btn--echo .tc-btn-label { font-size: 0.66rem; }
+
+/* Icônes CSS pures */
+.tc-icon-fire {
+  width: 0; height: 0;
+  border-style: solid;
+  border-width: 11px 0 11px 18px;
+  border-color: transparent transparent transparent var(--cyan);
+  filter: drop-shadow(0 0 6px rgba(0, 255, 255, 0.8));
+}
+.tc-icon-echo {
+  position: relative; width: 26px; height: 16px;
+}
+.tc-icon-echo::before,
+.tc-icon-echo::after {
+  content: ''; position: absolute; left: 50%; bottom: 0;
+  border: 2px solid var(--magenta);
+  border-color: var(--magenta) transparent transparent transparent;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 0 5px rgba(255, 0, 255, 0.8));
+}
+.tc-icon-echo::before { width: 12px; height: 12px; }
+.tc-icon-echo::after  { width: 24px; height: 24px; opacity: 0.55; }
+
+/* Anneau de cooldown : balayage conique qui se vide sur la durée réelle */
+.tc-cooldown {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(rgba(2, 2, 10, 0.66) var(--tc-ang), transparent 0);
+  animation-name: tc-sweep;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  animation-play-state: paused;
+}
+@keyframes tc-sweep {
+  from { --tc-ang: 360deg; }
+  to   { --tc-ang: 0deg; }
+}
+
+/* Onde émise à chaque pression (feedback tactile visuel) */
+.tc-ripple {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  border: 2px solid currentColor;
+  opacity: 0;
+  animation: tc-ripple 0.5s ease-out;
+}
+@keyframes tc-ripple {
+  0%   { opacity: 0.7; transform: scale(0.85); }
+  100% { opacity: 0;   transform: scale(1.6); }
+}
+
+/* Petits écrans : on resserre un peu les contrôles */
+@media (max-height: 430px) {
+  .tc-btn--fire { width: 100px; height: 100px; }
+  .tc-btn--echo { width: 84px; height: 84px; }
+}

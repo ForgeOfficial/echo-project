@@ -2,14 +2,16 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { GameRenderer } from '../lib/renderer';
-import { EV, ARENA, PLAYER } from '../lib/constants';
+import { EV, ARENA, PLAYER, PROJECTILE, SONAR } from '../lib/constants';
 import { audio } from '../lib/audio';
+import TouchControls from './TouchControls';
 
 export default function GameCanvas({ matchData, initialState }) {
   const { socket, user } = useApp();
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);
   const keysRef = useRef({});
+  const touchRef = useRef({ up: false, down: false, left: false, right: false });
   const lastInputRef = useRef({});
   const myIdxRef = useRef(0);
   const wallsRef = useRef(null);
@@ -58,12 +60,36 @@ export default function GameCanvas({ matchData, initialState }) {
 
   const unlockAudio = useCallback(() => { audioUnlockedRef.current = true; }, []);
 
-  const buildInputs = useCallback(() => ({
-    up:    !!(keysRef.current['KeyW'] || keysRef.current['ArrowUp']),
-    down:  !!(keysRef.current['KeyS'] || keysRef.current['ArrowDown']),
-    left:  !!(keysRef.current['KeyA'] || keysRef.current['ArrowLeft']),
-    right: !!(keysRef.current['KeyD'] || keysRef.current['ArrowRight']),
-  }), []);
+  // Détection tactile (téléphone/tablette) : affiche les contrôles à l'écran.
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => {
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+    setIsTouch(!!coarse || 'ontouchstart' in window || navigator.maxTouchPoints > 0);
+  }, []);
+
+  // Handlers branchés sur les contrôles tactiles.
+  const handleTouchMove = useCallback((dirs) => {
+    touchRef.current = dirs;
+    sendInputIfChanged();
+  }, []); // sendInputIfChanged est stable (deps stables) ; défini plus bas via hoisting de useCallback
+  const handleTouchShoot = useCallback(() => {
+    socket.current?.emit(EV.PLAYER_SHOOT);
+    if (audioUnlockedRef.current) audio.shoot();
+  }, [socket]);
+  const handleTouchPing = useCallback(() => {
+    socket.current?.emit(EV.PLAYER_PING);
+    if (audioUnlockedRef.current) audio.ping();
+  }, [socket]);
+
+  const buildInputs = useCallback(() => {
+    const k = keysRef.current, t = touchRef.current;
+    return {
+      up:    !!(k['KeyW'] || k['KeyZ'] || k['ArrowUp']    || t.up),
+      down:  !!(k['KeyS'] || k['ArrowDown']  || t.down),
+      left:  !!(k['KeyA'] || k['KeyQ'] || k['ArrowLeft']  || t.left),
+      right: !!(k['KeyD'] || k['ArrowRight'] || t.right),
+    };
+  }, []);
 
   const sendInputIfChanged = useCallback(() => {
     const s = socket.current;
@@ -167,14 +193,20 @@ export default function GameCanvas({ matchData, initialState }) {
   useEffect(() => {
     const STAGE_W = 800, STAGE_H = 656; // canvas 600 + HUD ~56
     const recompute = () => {
-      const availW = window.innerWidth - 32;
-      const availH = window.innerHeight - 56 - 32; // navbar + marges
+      // En tactile, le jeu passe en plein écran (navbar masquée) et les
+      // contrôles flottent par-dessus → on exploite presque toute la surface.
+      const availW = window.innerWidth - (isTouch ? 12 : 32);
+      const availH = window.innerHeight - (isTouch ? 12 : 56 + 32);
       setScale(Math.min(1, availW / STAGE_W, availH / STAGE_H));
     };
     recompute();
     window.addEventListener('resize', recompute);
-    return () => window.removeEventListener('resize', recompute);
-  }, []);
+    window.addEventListener('orientationchange', recompute);
+    return () => {
+      window.removeEventListener('resize', recompute);
+      window.removeEventListener('orientationchange', recompute);
+    };
+  }, [isTouch]);
 
   const { players, timeLeft, matchInfo, suddenDeath } = hudState;
   const info = matchInfo || matchData;
@@ -222,7 +254,7 @@ export default function GameCanvas({ matchData, initialState }) {
   };
 
   return (
-    <div className="game-shell">
+    <div className={`game-shell${isTouch ? ' touch' : ''}`}>
       {/* scale sur le wrapper externe, shake sur .game-stage (ne se gênent pas) */}
       <div className="game-scaler" style={{ transform: `scale(${scale})` }}>
       <div className="game-stage" ref={stageRef}>
@@ -239,13 +271,26 @@ export default function GameCanvas({ matchData, initialState }) {
           <div ref={dmgRef} className="damage-overlay-fx" />
           {suddenDeath && <div className="sudden-death-banner">MORT SUBITE</div>}
         </div>
-        <div className="game-controls-hint">
-          <span>ZQSD/WASD · Flèches — déplacement</span>
-          <span><b>Espace</b> — sonar</span>
-          <span><b>F / Entrée</b> — tir</span>
-        </div>
+        {!isTouch && (
+          <div className="game-controls-hint">
+            <span>ZQSD/WASD · Flèches — déplacement</span>
+            <span><b>Espace</b> — sonar</span>
+            <span><b>F / Entrée</b> — tir</span>
+          </div>
+        )}
       </div>
       </div>
+
+      {isTouch && (
+        <TouchControls
+          onMove={handleTouchMove}
+          onShoot={handleTouchShoot}
+          onPing={handleTouchPing}
+          onFirstTouch={unlockAudio}
+          shootCooldownMs={PROJECTILE.COOLDOWN_MS}
+          pingCooldownMs={SONAR.COOLDOWN_MS}
+        />
+      )}
     </div>
   );
 }
