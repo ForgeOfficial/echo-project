@@ -591,21 +591,23 @@ export class GameRenderer {
     }
 
     if (s.sonarWaves) {
-      const lingerDist = SONAR.SPEED * (SONAR.REVEAL_LINGER_MS / 1000);
+      // Balayage sonar : anneau de lumière FEUTRÉ (bords intérieur ET extérieur
+      // fondus) plutôt qu'une bande dure. Évite l'anneau brutal sur le voile noir.
+      const tailLen = 110; // longueur visuelle de la traîne (≈ la zone révélée)
       for (const wave of s.sonarWaves) {
         if (s.players?.[wave.playerIndex]?.team !== this.myTeam) continue; // seulement mon équipe
         const elapsed = now - wave.startTime;
         const front = Math.min((elapsed / 1000) * SONAR.SPEED, SONAR.MAX_RADIUS);
-        if (front <= 0) continue;
+        if (front <= 6) continue;
         const life = Math.max(0, 1 - elapsed / SONAR.LIFETIME_MS);
         if (life <= 0) continue;
-        const inner = Math.max(0, (front - lingerDist) / front);
-        const g = mctx.createRadialGradient(wave.x, wave.y, 0, wave.x, wave.y, front);
+        const peak = 0.5 * life;                       // pic plus doux qu'avant
+        const innerR = Math.max(0, front - tailLen);   // début feutré de la traîne
+        const g = mctx.createRadialGradient(wave.x, wave.y, innerR, wave.x, wave.y, front);
         g.addColorStop(0, 'rgba(255,255,255,0)');
-        g.addColorStop(inner, 'rgba(255,255,255,0)');
-        g.addColorStop((inner + 1) / 2, `rgba(255,255,255,${0.35 * life})`);
-        g.addColorStop(0.95, `rgba(255,255,255,${0.6 * life})`);
-        g.addColorStop(1, 'rgba(255,255,255,0)');
+        g.addColorStop(0.55, `rgba(255,255,255,${peak * 0.4})`);
+        g.addColorStop(0.86, `rgba(255,255,255,${peak})`); // crête juste derrière le front
+        g.addColorStop(1, 'rgba(255,255,255,0)');           // bord extérieur fondu
         mctx.fillStyle = g;
         mctx.beginPath(); mctx.arc(wave.x, wave.y, front, 0, Math.PI * 2); mctx.fill();
       }
@@ -643,17 +645,18 @@ export class GameRenderer {
       const color = this._teamColor(s.players?.[wave.playerIndex]?.team);
       ctx.beginPath();
       ctx.arc(wave.x, wave.y, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${color},${alpha * 0.9})`;
-      ctx.lineWidth = 2;
-      ctx.shadowColor = `rgba(${color},0.8)`;
-      ctx.shadowBlur = 20;
+      ctx.strokeStyle = `rgba(${color},${alpha * 0.75})`;
+      ctx.lineWidth = 1.5;
+      ctx.shadowColor = `rgba(${color},0.7)`;
+      ctx.shadowBlur = 16;
       ctx.stroke();
+      // léger halo intérieur qui adoucit la transition vers la traîne révélée
       if (radius > 24) {
         ctx.beginPath();
-        ctx.arc(wave.x, wave.y, radius - 14, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${color},${alpha * 0.18})`;
-        ctx.lineWidth = 1;
-        ctx.shadowBlur = 4;
+        ctx.arc(wave.x, wave.y, radius - 12, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${color},${alpha * 0.14})`;
+        ctx.lineWidth = 6;
+        ctx.shadowBlur = 8;
         ctx.stroke();
       }
     });
