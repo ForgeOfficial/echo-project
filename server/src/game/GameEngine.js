@@ -23,6 +23,11 @@ class GameEngine {
     this.maxHp = mode.maxHp || PLAYER.MAX_HP;
     this.durationMs = mode.durationMs || GAME.MAX_DURATION_MS;
     this.borderMapEnabled = !!mode.borderMap;
+    // Mode Frags : on réapparaît après un délai et la victoire se joue au nombre
+    // de kills (équipe la 1re à killTarget) plutôt qu'à l'élimination.
+    this.deathmatch = mode.objective === 'deathmatch';
+    this.killTarget = mode.killTarget || 0;
+    this.respawnMs = mode.respawnMs || 3000;
 
     // Arène dimensionnée selon le nombre de joueurs (source partagée).
     this.arena = arenaForPlayers(this.totalPlayers);
@@ -36,7 +41,7 @@ class GameEngine {
     this.endTime = null;
     this.over = false;
     this.winnerTeam = null; // fixé quand la partie se termine
-    this.stats = Array.from({ length: this.totalPlayers }, () => ({ pings: 0, shots: 0, hits: 0 }));
+    this.stats = Array.from({ length: this.totalPlayers }, () => ({ pings: 0, shots: 0, hits: 0, kills: 0, deaths: 0 }));
     this._projIdSeq = 0;
     this._waveIdSeq = 0;
     this._events = [];
@@ -127,6 +132,7 @@ class GameEngine {
       exposed: false,
       exposedUntil: 0,
       gasAccum: 0,
+      respawnAt: 0,   // mode Frags : timestamp de réapparition quand hp<=0
     });
   }
 
@@ -196,6 +202,7 @@ class GameEngine {
       return this._resolveTimer();
     }
 
+    if (this.deathmatch) this._updateRespawns(now);
     this._updatePlayers(dt, now);
     this._updateProjectiles(dt, now);
     if (this.borderMapEnabled && !this.suddenDeath) {
@@ -337,19 +344,90 @@ class GameEngine {
           target.hp--;
           target.invincibleUntil = now + PLAYER.INVINCIBILITY_MS;
           this.stats[proj.playerIndex].hits++;
-          this._events.push({ type: 'hit', victim: ti, by: proj.playerIndex });
+          this._events.push({ type: 'hit', victim: ti, by: proj.playerIndex, x: proj.x, y: proj.y });
           toRemove.add(proj.id);
           // Fin de partie : mort subite (1er coup) ou une seule équipe survivante.
           if (this.suddenDeath) {
             this._setOver(shooterTeam);
           } else if (target.hp <= 0) {
-            this._maybeEndByElimination();
+            this._onKill(proj.playerIndex, ti, now);
+            if (this.over) return;
           }
           break; // un projectile ne touche qu'une cible
         }
       }
     }
     this.projectiles = this.projectiles.filter(p => !toRemove.has(p.id));
+  }
+
+  // Une élimination vient d'avoir lieu (victime à 0 PV). En mode Frags : on
+  // crédite le kill, on programme le respawn de la victime et on vérifie
+  // l'objectif. Sinon : élimination classique (fin si une seule équipe survit).
+  _onKill(killerIdx, victimIdx, now) {
+    if (this.stats[victimIdx]) this.stats[victimIdx].deaths++;
+    if (killerIdx >= 0 && this.stats[killerIdx]) this.stats[killerIdx].kills++;
+    this._events.push({ type: 'kill', killer: killerIdx, victim: victimIdx });
+
+    if (!this.deathmatch) { this._maybeEndByElimination(); return; }
+
+    // Frags : la victime réapparaîtra après respawnMs.
+    const victim = this.players[victimIdx];
+    if (victim) victim.respawnAt = now + this.respawnMs;
+    // Victoire : 1re équipe (= joueur en FFA) à atteindre l'objectif de kills.
+    const killerTeam = this.players[killerIdx]?.team;
+    if (killerTeam != null && this.killTarget > 0 && this._teamKills(killerTeam) >= this.killTarget) {
+      this._setOver(killerTeam);
+    }
+  }
+
+  _teamKills(team) {
+    let sum = 0;
+    this.players.forEach((p, i) => { if (p.team === team) sum += this.stats[i]?.kills || 0; });
+    return sum;
+  }
+
+  // Mode Frags : réapparition des joueurs dont le délai est écoulé.
+  _updateRespawns(now) {
+    for (let i = 0; i < this.players.length; i++) {
+      const p = this.players[i];
+      if (!p || p.hp > 0 || !p.respawnAt) continue;
+      if (now >= p.respawnAt) this._respawn(i, now);
+    }
+  }
+
+  _respawn(idx, now) {
+    const p = this.players[idx];
+    const pt = this._pickRespawnPoint(p);
+    p.x = pt.x; p.y = pt.y;
+    p.vx = 0; p.vy = 0;
+    p.hp = this.maxHp;
+    p.respawnAt = 0;
+    p.gasAccum = 0;
+    p.exposed = false;
+    p.invincibleUntil = now + Math.max(PLAYER.INVINCIBILITY_MS, 1500); // grâce d'apparition
+    p.angle = Math.atan2(this.arena.HEIGHT / 2 - p.y, this.arena.WIDTH / 2 - p.x);
+    this._events.push({ type: 'respawn', playerIndex: idx });
+  }
+
+  // Choisit un point de réapparition libre (hors mur) le plus loin possible des
+  // ennemis vivants → évite de réapparaître sous le feu / le spawn-camping.
+  _pickRespawnPoint(forPlayer) {
+    const S = this.arena.CELL_SIZE, cols = this.arena.COLS, rows = this.arena.ROWS;
+    let best = null, bestScore = -Infinity;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const c = 1 + Math.floor(Math.random() * (cols - 2));
+      const r = 1 + Math.floor(Math.random() * (rows - 2));
+      if (this._wallSet.has(`${c},${r}`)) continue;
+      const x = c * S + S / 2, y = r * S + S / 2;
+      let nearest = Infinity;
+      for (const o of this.players) {
+        if (o === forPlayer || o.hp <= 0 || o.team === forPlayer.team) continue;
+        nearest = Math.min(nearest, Math.hypot(x - o.x, y - o.y));
+      }
+      if (nearest > bestScore) { bestScore = nearest; best = { x, y }; }
+      if (nearest > 320) break; // assez loin, on s'arrête
+    }
+    return best || { x: forPlayer.x, y: forPlayer.y };
   }
 
   // Partie terminée s'il ne reste qu'une équipe (ou zéro) avec des joueurs en vie.
@@ -391,6 +469,8 @@ class GameEngine {
   }
 
   _resolveTimer() {
+    // Frags : au temps, c'est l'équipe avec le plus de kills qui l'emporte.
+    if (this.deathmatch) return this._resolveByKills();
     const sums = this._teamHpSums();
     let best = -Infinity, bestTeam = -1, tie = false;
     sums.forEach((s, t) => {
@@ -408,6 +488,20 @@ class GameEngine {
     }
     this._setOver(-1);
     return { winnerTeam: -1, reason: 'timer' };
+  }
+
+  // Départage Frags au temps écoulé : plus grand cumul de kills par équipe.
+  _resolveByKills() {
+    const kills = new Array(this.teamCount).fill(0);
+    this.players.forEach((p, i) => { kills[p.team] += this.stats[i]?.kills || 0; });
+    let best = -Infinity, bestTeam = -1, tie = false;
+    kills.forEach((k, t) => {
+      if (k > best) { best = k; bestTeam = t; tie = false; }
+      else if (k === best) { tie = true; }
+    });
+    const winnerTeam = tie ? -1 : bestTeam;
+    this._setOver(winnerTeam);
+    return { winnerTeam, reason: 'timer' };
   }
 
   getWinnerTeam() {
@@ -466,7 +560,12 @@ class GameEngine {
     const seen = (this._lastSeen[observerIndex] || (this._lastSeen[observerIndex] = {}));
     const full = (p, withPing) => {
       const o = { x: p.x, y: p.y, angle: p.angle, hp: p.hp, team: p.team, exposed: p.exposed };
-      if (withPing) o.lastPingTime = p.lastPingTime; // utile seulement pour soi (anneau de cooldown)
+      if (withPing) {
+        o.lastPingTime = p.lastPingTime;   // utile seulement pour soi (anneau de cooldown)
+        // Frags : temps restant avant réapparition (ms relatif → insensible au
+        // décalage d'horloge client/serveur).
+        if (p.hp <= 0 && p.respawnAt) o.respawnIn = Math.max(0, p.respawnAt - now);
+      }
       return o;
     };
 
@@ -490,6 +589,11 @@ class GameEngine {
       if (!visible) return culled;
       return full(p, false);
     });
+
+    // Frags : le nombre de kills est public (tableau des scores) pour tous les slots.
+    if (this.deathmatch) {
+      players.forEach((o, i) => { o.kills = this.stats[i]?.kills || 0; });
+    }
 
     const projectiles = [];
     for (const pr of this.projectiles) {

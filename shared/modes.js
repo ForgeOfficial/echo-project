@@ -39,7 +39,14 @@ function buildCustomMode(config = {}) {
   const format = config.format === 'team' ? 'team' : 'ffa';
   const lives = clampInt(config.lives, 1, 9, 3);
   const durationSec = clampInt(config.durationSec, 30, 600, 120);
-  const borderMap = !!config.borderMap;
+  // Objectif de partie : 'survival' (dernier en vie / le plus de PV au temps,
+  // comportement historique) ou 'deathmatch' (Frags : respawn + 1er à X kills).
+  const objective = config.objective === 'deathmatch' ? 'deathmatch' : 'survival';
+  const deathmatch = objective === 'deathmatch';
+  const killTarget = clampInt(config.killTarget, 5, 50, 15);
+  const respawnMs = clampInt(config.respawnSec, 1, 10, 3) * 1000;
+  // En Frags, la zone toxique n'a pas de sens (on réapparaît) → désactivée.
+  const borderMap = deathmatch ? false : !!config.borderMap;
 
   const MAX_PLAYERS = 32; // borne dure (interest management → scaling ~30j)
   let teamCount, teamSize, totalPlayers;
@@ -62,11 +69,15 @@ function buildCustomMode(config = {}) {
     ? Array.from({ length: teamCount }, (_, i) => `J${i + 1}`)
     : (teamCount === 2 ? TEAM_NAMES_2.slice() : Array.from({ length: teamCount }, (_, i) => `Équipe ${i + 1}`));
 
+  const baseShort = format === 'ffa' ? `FFA ${totalPlayers}` : `${teamCount}×${teamSize}`;
   return {
     id: 'custom',
     label: 'Personnalisée',
-    short: format === 'ffa' ? `FFA ${totalPlayers}` : `${teamCount}×${teamSize}`,
+    short: deathmatch ? `${baseShort} · ${killTarget} frags` : baseShort,
     format,
+    objective,
+    killTarget,
+    respawnMs,
     teamSize,
     teamCount,
     totalPlayers,

@@ -259,6 +259,34 @@ body::after {
   50% { opacity: 0.45; }
 }
 
+/* Mode Frags : voile de réapparition après élimination. */
+.respawn-overlay {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 0.2rem;
+  background: radial-gradient(ellipse at center, rgba(255,60,80,0.12), rgba(3,3,14,0.55) 70%);
+  pointer-events: none; text-align: center;
+}
+.respawn-label {
+  font-family: var(--font-display); font-weight: 700; font-size: 0.8rem;
+  letter-spacing: 0.4em; text-indent: 0.4em; color: #FF6B7E;
+  text-shadow: 0 0 16px rgba(255,60,80,0.7);
+}
+.respawn-count {
+  font-family: var(--font-display); font-weight: 900;
+  font-size: clamp(3rem, 9vw, 5.5rem); line-height: 1; color: #fff;
+  text-shadow: 0 0 24px rgba(0,255,255,0.6), 0 0 50px rgba(0,255,255,0.3);
+  animation: respawn-pop 1s ease-out infinite;
+}
+@keyframes respawn-pop {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  35% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.respawn-sub {
+  font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+
 /* ——— GAME HUD ——— */
 .game-hud {
   width: 800px; display: flex; justify-content: space-between;
@@ -284,6 +312,16 @@ body::after {
 .hp-dot.empty { opacity: 0.25; }
 .hud-elo-badge { color: var(--text-dim); font-size: 0.7rem; }
 .hud-timer { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: 0.1em; }
+.hud-center { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.hud-objective {
+  font-family: var(--font-display); font-size: 0.66rem; letter-spacing: 0.12em;
+  color: var(--gold); text-shadow: 0 0 10px rgba(255,215,0,0.4); white-space: nowrap;
+}
+.hud-kills {
+  font-family: var(--font-display); font-size: 0.82rem; font-weight: 700;
+  display: inline-flex; align-items: baseline; gap: 1px;
+}
+.hud-kills small { font-size: 0.6em; opacity: 0.7; }
 
 /* Modes en équipe : chaque côté du HUD empile son label + ses membres. */
 .hud-side.team { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
@@ -366,7 +404,7 @@ body::after {
   font-family: var(--font-display); font-weight: 900;
   font-size: clamp(3.5rem, 13vw, 8rem); letter-spacing: 0.4em;
   color: var(--cyan); line-height: 1;
-  margin-left: 0.2em; /* recentre : moitié du tracking compense l'espace de fin */
+  margin-right: -0.4em; /* supprime l'espace de fin du tracking → boîte = lettres, centrage exact */
   text-shadow:
     0 0 18px var(--cyan),
     0 0 45px rgba(0,255,255,0.5),
@@ -635,6 +673,7 @@ body::after {
 .cg-stepper-val { min-width: 46px; text-align: center; font-family: var(--font-display); font-size: 1.05rem; color: var(--text); }
 .cg-total { font-size: 0.75rem; color: var(--text-dim); text-align: center; letter-spacing: 0.04em; }
 .cg-total.err { color: var(--warn); }
+.cg-mode-desc { font-size: 0.66rem; color: var(--text-dim); margin-top: 0.45rem; line-height: 1.35; letter-spacing: 0.02em; }
 .cg-opts { display: flex; flex-direction: column; gap: 0.6rem; border-top: 1px solid var(--border); padding-top: 1rem; }
 .cg-toggle { display: flex; align-items: center; gap: 0.7rem; background: none; border: none; cursor: pointer; text-align: left; padding: 0; }
 .cg-toggle-track {

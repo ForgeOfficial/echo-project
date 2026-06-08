@@ -34,26 +34,32 @@ function Toggle({ label, checked, onChange, hint }) {
 
 export default function CustomGameModal({ onClose, onCreate }) {
   const [format, setFormat] = useState('ffa');
+  const [objective, setObjective] = useState('survival');
   const [playerCount, setPlayerCount] = useState(4);
   const [teamCount, setTeamCount] = useState(2);
   const [teamSize, setTeamSize] = useState(2);
   const [durationSec, setDurationSec] = useState(120);
   const [lives, setLives] = useState(3);
+  const [killTarget, setKillTarget] = useState(15);
+  const [respawnSec, setRespawnSec] = useState(3);
   const [waitForFull, setWaitForFull] = useState(true);
   const [autoBalance, setAutoBalance] = useState(true);
   const [borderMap, setBorderMap] = useState(true);
 
   const total = format === 'ffa' ? playerCount : teamCount * teamSize;
   const tooMany = total > 32;
+  const isFrags = objective === 'deathmatch';
 
   function submit() {
     if (tooMany) return;
     onCreate({
       format,
+      objective,
       playerCount, teamCount, teamSize,
       durationSec, lives, waitForFull,
+      killTarget, respawnSec,
       autoBalance: format === 'team' ? autoBalance : true,
-      borderMap,
+      borderMap: isFrags ? false : borderMap, // Frags incompatible zone toxique
     });
   }
 
@@ -67,6 +73,20 @@ export default function CustomGameModal({ onClose, onCreate }) {
         <div className="cg-seg">
           <button type="button" className={format === 'ffa' ? 'active' : ''} onClick={() => setFormat('ffa')}>Chacun pour soi</button>
           <button type="button" className={format === 'team' ? 'active' : ''} onClick={() => setFormat('team')}>Équipes</button>
+        </div>
+
+        {/* Objectif / mode de jeu */}
+        <div className="cg-field">
+          <div className="cg-field-label">Mode de jeu</div>
+          <div className="cg-seg">
+            <button type="button" className={!isFrags ? 'active' : ''} onClick={() => setObjective('survival')}>Survie</button>
+            <button type="button" className={isFrags ? 'active' : ''} onClick={() => setObjective('deathmatch')}>Frags</button>
+          </div>
+          <div className="cg-mode-desc">
+            {isFrags
+              ? 'Réapparition après ta mort · 1er à atteindre l\'objectif de kills gagne.'
+              : 'Une vie : dernier(s) en vie ou plus de PV au temps écoulé.'}
+          </div>
         </div>
 
         {/* Effectif */}
@@ -92,8 +112,14 @@ export default function CustomGameModal({ onClose, onCreate }) {
           </div>
         </div>
 
-        {/* Vies */}
-        <Stepper label="Vies (PV)" value={lives} min={1} max={9} onChange={setLives} hint="touches avant élimination" />
+        {/* Vies / réglages Frags */}
+        {isFrags ? (
+          <div className="cg-row2">
+            <Stepper label="Kills pour gagner" value={killTarget} min={5} max={50} onChange={setKillTarget} hint="1er à atteindre" />
+            <Stepper label="Respawn (s)" value={respawnSec} min={1} max={10} onChange={setRespawnSec} hint="délai de réapparition" />
+          </div>
+        ) : null}
+        <Stepper label={isFrags ? 'PV par vie' : 'Vies (PV)'} value={lives} min={1} max={9} onChange={setLives} hint={isFrags ? 'touches avant de respawn' : 'touches avant élimination'} />
 
         {/* Options */}
         <div className="cg-opts">
@@ -101,7 +127,9 @@ export default function CustomGameModal({ onClose, onCreate }) {
           {format === 'team' && (
             <Toggle label="Répartition auto des équipes" checked={autoBalance} onChange={setAutoBalance} hint="sinon chacun choisit" />
           )}
-          <Toggle label="Zone toxique qui rétrécit" checked={borderMap} onChange={setBorderMap} hint="gaz mortel hors de la zone" />
+          {!isFrags && (
+            <Toggle label="Zone toxique qui rétrécit" checked={borderMap} onChange={setBorderMap} hint="gaz mortel hors de la zone" />
+          )}
         </div>
 
         <button className="btn btn-lg cg-create" onClick={submit} disabled={tooMany}>Créer la partie</button>

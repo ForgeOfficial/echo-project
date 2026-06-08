@@ -302,7 +302,17 @@ function createGame(io, mode, roster) {
   room.tickInterval = setInterval(() => {
     const result = engine.tick(GAME.TICK_MS);
     engine.consumeEvents().forEach(e => {
-      if (e.type === 'hit') io.to(gameId).emit(EV.PLAYER_HIT, { playerIndex: e.victim, by: e.by });
+      if (e.type === 'hit') {
+        // Position de l'impact transmise UNIQUEMENT au tireur → il voit où il a
+        // touché même hors-vue, sans divulguer la cible aux autres joueurs.
+        room.players.forEach((p, idx) => {
+          const sock = io.sockets.sockets.get(p.socketId);
+          if (!sock) return;
+          const payload = { playerIndex: e.victim, by: e.by };
+          if (idx === e.by) { payload.x = e.x; payload.y = e.y; }
+          sock.emit(EV.PLAYER_HIT, payload);
+        });
+      }
     });
     if (engine.over) { _endGame(io, room, result); return; }
     emitPerPlayer(io, room, EV.GAME_STATE, false);
@@ -408,6 +418,9 @@ function publicMode(mode) {
     teamNames: mode.teamNames, teamColors: mode.teamColors,
     maxHp: mode.maxHp || 3, durationMs: mode.durationMs, borderMap: !!mode.borderMap,
     autoBalance: !!mode.autoBalance,
+    objective: mode.objective || 'survival',
+    killTarget: mode.killTarget || 0,
+    respawnMs: mode.respawnMs || 0,
   };
 }
 

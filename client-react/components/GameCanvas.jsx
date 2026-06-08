@@ -146,12 +146,16 @@ export default function GameCanvas({ matchData, initialState }) {
       if (me) aliveRef.current = me.hp > 0;
       setHudState(h => ({ ...h, players: state.players || [], timeLeft: state.timeLeft, suddenDeath: state.suddenDeath }));
     };
-    const onHit = ({ playerIndex }) => {
+    const onHit = ({ playerIndex, by, x, y }) => {
       rendererRef.current?.triggerHit(playerIndex);
       if (playerIndex === myIdxRef.current) {
         playDamageFx();                                  // je perds une vie
-      } else if (audioUnlockedRef.current) {
-        audio.hitConfirm();                              // je touche l'adversaire
+      } else if (by === myIdxRef.current) {
+        if (audioUnlockedRef.current) audio.hitConfirm(); // c'est MOI qui touche
+        // Révèle brièvement la cible touchée, même si elle est hors-vue : un
+        // marqueur d'impact apparaît à l'endroit du tir réussi (le serveur ne
+        // m'envoie x/y que pour mes propres touches).
+        if (x != null && y != null) rendererRef.current?.triggerHitReveal(playerIndex, x, y);
       }
     };
     // La fin de partie (GAME_END) est gérée au niveau de la page /games/:id :
@@ -233,6 +237,23 @@ export default function GameCanvas({ matchData, initialState }) {
   const manyTeams = teamCount > 2; // FFA / 3+ équipes → HUD compact en bandeau
   const timeWarning = timeLeft < 30000;
 
+  // Mode Frags : objectif de kills + réapparition.
+  const isFrags = mode?.objective === 'deathmatch';
+  const killTarget = mode?.killTarget || 0;
+  const me = players[myIdxRef.current];
+  const respawnSecLeft = isFrags && me && me.hp <= 0 && me.respawnIn != null
+    ? Math.ceil(me.respawnIn / 1000) : 0;
+  // Cumul de kills par équipe (= par joueur en FFA) pour le tableau de scores.
+  const teamKills = isFrags
+    ? roster.reduce((acc, p, idx) => {
+        acc[p.team] = (acc[p.team] || 0) + (players[idx]?.kills || 0);
+        return acc;
+      }, {})
+    : {};
+  const fragLeader = isFrags
+    ? Math.max(0, ...Object.values(teamKills))
+    : 0;
+
   const formatTime = (ms) => {
     const s = Math.ceil(ms / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -251,7 +272,8 @@ export default function GameCanvas({ matchData, initialState }) {
               : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
           ))}
         </div>
-        {teamSize === 1 && !manyTeams && m.elo != null && <span className="hud-elo-badge">{m.elo}</span>}
+        {isFrags && <span className="hud-kills" style={{ color: col }}>{players[m.idx]?.kills || 0}<small>☠</small></span>}
+        {!isFrags && teamSize === 1 && !manyTeams && m.elo != null && <span className="hud-elo-badge">{m.elo}</span>}
       </div>
     );
   };
@@ -276,6 +298,7 @@ export default function GameCanvas({ matchData, initialState }) {
                     : { background: 'transparent', border: `1px solid ${col}`, opacity: 0.3 }} />
                 ))}
               </div>
+              {isFrags && <span className="hud-kills" style={{ color: col }}>{players[m.idx]?.kills || 0}<small>☠</small></span>}
             </div>
           );
         })}
@@ -305,15 +328,21 @@ export default function GameCanvas({ matchData, initialState }) {
           {manyTeams ? (
             <>
               {scoreboard()}
-              <div className="hud-timer" style={{ color: timeWarning ? 'var(--warn)' : 'var(--text)' }}>
-                {formatTime(timeLeft)}
+              <div className="hud-center">
+                <div className="hud-timer" style={{ color: timeWarning ? 'var(--warn)' : 'var(--text)' }}>
+                  {formatTime(timeLeft)}
+                </div>
+                {isFrags && <div className="hud-objective">🎯 {fragLeader} / {killTarget}</div>}
               </div>
             </>
           ) : (
             <>
               {teamPanel(0, 'left')}
-              <div className="hud-timer" style={{ color: suddenDeath ? '#FF3C50' : (timeWarning ? 'var(--warn)' : 'var(--text)') }}>
-                {suddenDeath ? '☠ SUBITE' : formatTime(timeLeft)}
+              <div className="hud-center">
+                <div className="hud-timer" style={{ color: suddenDeath ? '#FF3C50' : (timeWarning ? 'var(--warn)' : 'var(--text)') }}>
+                  {suddenDeath ? '☠ SUBITE' : formatTime(timeLeft)}
+                </div>
+                {isFrags && <div className="hud-objective">🎯 {fragLeader} / {killTarget}</div>}
               </div>
               {teamPanel(1, 'right')}
             </>
@@ -324,6 +353,13 @@ export default function GameCanvas({ matchData, initialState }) {
           {/* overlay de dégâts (flash rouge depuis les bords) */}
           <div ref={dmgRef} className="damage-overlay-fx" />
           {suddenDeath && <div className="sudden-death-banner">MORT SUBITE</div>}
+          {respawnSecLeft > 0 && (
+            <div className="respawn-overlay">
+              <div className="respawn-label">ÉLIMINÉ</div>
+              <div className="respawn-count">{respawnSecLeft}</div>
+              <div className="respawn-sub">réapparition…</div>
+            </div>
+          )}
         </div>
         {!isTouch && (
           <div className="game-controls-hint">

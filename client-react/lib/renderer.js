@@ -27,6 +27,7 @@ export class GameRenderer {
     this._rafId = null;
     this._lastTs = 0;
     this._hitFlash = [];
+    this._hitReveals = [];   // marqueurs « tu as touché ici » (cibles hors-vue)
     this._lastWalls = null;
 
     // Interpolation : on bufferise les snapshots serveur et on rend avec un
@@ -253,6 +254,14 @@ export class GameRenderer {
 
   triggerHit(playerIndex) { this._hitFlash[playerIndex] = 500; }
 
+  // Marqueur d'impact affiché à l'endroit où MON tir a touché, même si la cible
+  // est hors-vue (interest management). Donne un retour visuel au hit-marker
+  // sonore : on voit enfin qui/où on a touché.
+  triggerHitReveal(victimIndex, x, y) {
+    this._hitReveals.push({ x, y, victimIndex, start: Date.now() });
+    if (this._hitReveals.length > 12) this._hitReveals.shift();
+  }
+
   // Lance la célébration de l'équipe gagnante (à la dernière position connue
   // d'un de ses joueurs).
   startCelebration(winnerTeam) {
@@ -385,6 +394,7 @@ export class GameRenderer {
     this._drawEnemies(ctx, s, now);
     this._drawTeammates(ctx, s, now);
     this._drawSelf(ctx, s, now);
+    this._drawHitReveals(ctx, now);
 
     // ——— 5. Cadre + vignette + alerte gaz ———
     this._drawFrame(now);
@@ -424,6 +434,7 @@ export class GameRenderer {
       });
     }
     this._drawSelf(ctx, s, now);
+    this._drawHitReveals(ctx, now);
 
     ctx.save();
     ctx.strokeStyle = `rgba(255,60,80,${0.6 + 0.3 * pulse})`;
@@ -735,6 +746,65 @@ export class GameRenderer {
         ctx.shadowBlur = 0;
         ctx.stroke();
       }
+    }
+    ctx.restore();
+  }
+
+  // Retour visuel des touches sur cible hors-vue : flash blanc bref, onde de
+  // choc dans la couleur de la cible, et croix « hit-marker » qui s'écarte.
+  _drawHitReveals(ctx, now) {
+    if (!this._hitReveals.length) return;
+    const DUR = 850;
+    const latest = this._buffer[this._buffer.length - 1]?.state;
+    ctx.save();
+    for (let i = this._hitReveals.length - 1; i >= 0; i--) {
+      const h = this._hitReveals[i];
+      const el = now - h.start;
+      if (el >= DUR) { this._hitReveals.splice(i, 1); continue; }
+      const t = el / DUR;             // progression 0→1
+      const a = 1 - t;                // alpha décroissant
+      const ease = 1 - (1 - t) * (1 - t);
+      const team = latest?.players?.[h.victimIndex]?.team;
+      const color = team != null ? this._teamColor(team) : '255,80,80';
+
+      ctx.save();
+      ctx.translate(h.x, h.y);
+
+      // Flash central très bref (impact)
+      const flash = Math.max(0, 1 - el / 180);
+      if (flash > 0) {
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 24);
+        g.addColorStop(0, `rgba(255,255,255,${0.9 * flash})`);
+        g.addColorStop(0.5, `rgba(${color},${0.55 * flash})`);
+        g.addColorStop(1, `rgba(${color},0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(0, 0, 24, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // Onde de choc qui s'étend et s'estompe
+      ctx.beginPath();
+      ctx.arc(0, 0, 9 + ease * 30, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${color},${a * 0.9})`;
+      ctx.lineWidth = 0.5 + 2.5 * a;
+      ctx.shadowColor = `rgba(${color},0.9)`;
+      ctx.shadowBlur = 14;
+      ctx.stroke();
+
+      // Croix « hit-marker » en diagonale (style FPS) qui s'écarte légèrement
+      const gap = 6 + ease * 7, len = 7;
+      ctx.strokeStyle = `rgba(255,255,255,${a})`;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = 'rgba(255,255,255,0.8)';
+      ctx.shadowBlur = 6;
+      for (let k = 0; k < 4; k++) {
+        const ang = Math.PI / 4 + k * (Math.PI / 2);
+        const ux = Math.cos(ang), uy = Math.sin(ang);
+        ctx.beginPath();
+        ctx.moveTo(ux * gap, uy * gap);
+        ctx.lineTo(ux * (gap + len), uy * (gap + len));
+        ctx.stroke();
+      }
+      ctx.restore();
     }
     ctx.restore();
   }
