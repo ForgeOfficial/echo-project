@@ -52,6 +52,7 @@ export class GameRenderer {
     // Calques offscreen réutilisés (l'environnement passe par le fog, le reste est net)
     this._scene = this._makeLayer();
     this._mask = this._makeLayer();
+    this._fog = this._makeLayer();   // voile d'obscurité (tout sombre sauf la flaque de lumière)
   }
 
   _teamColor(team) {
@@ -81,6 +82,7 @@ export class GameRenderer {
     this.canvas.height = arena.HEIGHT;
     this._scene = this._makeLayer();
     this._mask = this._makeLayer();
+    this._fog = this._makeLayer();
   }
 
   start() { this._rafId = requestAnimationFrame(ts => this._loop(ts)); }
@@ -389,10 +391,11 @@ export class GameRenderer {
   _computeWallFog(s, now) {
     const A = this.arena, S = A.CELL_SIZE;
     const set = new Set();
-    // Révélation des murs en DISQUE autour de chaque coéquipier (un peu plus
-    // loin que l'ancien 3×3) pour mieux voir les blocs collés à soi sans tout
-    // dévoiler. Le rayon reste sous le halo de lumière (cf. _buildMask).
-    const REVEAL_R = S * 2;
+    // Révélation des murs en DISQUE autour de chaque coéquipier, calé sur la
+    // PORTÉE du halo de lumière (cf. _buildMask) : ainsi les murs sont dessinés
+    // partout où la lumière les éclaire, et c'est le masque (dégradé) qui gère
+    // le fondu doux du bord — plus de coupure nette au milieu de la lumière.
+    const REVEAL_R = 118;
     const reach = Math.ceil(REVEAL_R / S);
     for (const f of this._friendlies(s)) {
       const pc = Math.floor(f.x / S), pr = Math.floor(f.y / S);
@@ -461,11 +464,26 @@ export class GameRenderer {
 
     if (!s) { this._drawFrame(now); return; }
 
-    // ——— 2. Environnement "découvert" (murs) sur le calque scène, puis fog ———
+    // ——— 2. Masque de lumière (construit UNE fois : sert au voile ET aux murs) ———
+    this._buildMask(s, now);
+
+    // ——— 2a. Voile d'obscurité : on plonge toute l'arène dans le noir, puis on
+    // perce la flaque de lumière (destination-out du masque). Le sol/grille hors
+    // de la lumière devient vraiment sombre → sensation d'être « dans l'ombre ».
+    const fctx = this._fog.ctx;
+    fctx.clearRect(0, 0, W, H);
+    fctx.fillStyle = 'rgba(1,3,9,0.9)';
+    fctx.fillRect(0, 0, W, H);
+    fctx.save();
+    fctx.globalCompositeOperation = 'destination-out';
+    fctx.drawImage(this._mask.canvas, 0, 0);
+    fctx.restore();
+    ctx.drawImage(this._fog.canvas, 0, 0);
+
+    // ——— 2b. Murs découpés par la lumière (le masque gère le fondu du bord) ———
     const sctx = this._scene.ctx;
     sctx.clearRect(0, 0, W, H);
     this._drawWalls(sctx, s);
-    this._buildMask(s, now);
     sctx.save();
     sctx.globalCompositeOperation = 'destination-in';
     sctx.drawImage(this._mask.canvas, 0, 0);
@@ -559,13 +577,14 @@ export class GameRenderer {
     mctx.clearRect(0, 0, this.arena.WIDTH, this.arena.HEIGHT);
 
     for (const f of this._friendlies(s)) {
-      // Halo légèrement étendu + palier plus tenu pour que les blocs proches
-      // (révélés jusqu'à ~2 cases, cf. _computeWallFog) soient assez éclairés.
-      const auraR = 108;
+      // Flaque de lumière : zone proche bien lisible, puis fondu progressif vers
+      // le noir. C'est ce dégradé qui sculpte le bord de la lumière (et, via le
+      // voile, l'obscurité autour).
+      const auraR = 112;
       const g = mctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, auraR);
-      g.addColorStop(0, 'rgba(255,255,255,0.95)');
-      g.addColorStop(0.5, 'rgba(255,255,255,0.6)');
-      g.addColorStop(0.8, 'rgba(255,255,255,0.38)');
+      g.addColorStop(0, 'rgba(255,255,255,0.97)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0.8)');
+      g.addColorStop(0.72, 'rgba(255,255,255,0.45)');
       g.addColorStop(1, 'rgba(255,255,255,0)');
       mctx.fillStyle = g;
       mctx.beginPath(); mctx.arc(f.x, f.y, auraR, 0, Math.PI * 2); mctx.fill();

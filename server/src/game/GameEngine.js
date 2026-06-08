@@ -99,9 +99,9 @@ class GameEngine {
         }
       }
     });
-    // Densité de murs : un peu plus clairsemée sur les grandes arènes (gros
-    // effectifs) pour ne pas isoler des joueurs dans des poches fermées.
-    const density = cols > 40 ? 0.18 : 0.22;
+    // Densité de murs : plus dense qu'avant (labyrinthe plus marqué), un peu
+    // plus clairsemée sur les grandes arènes pour ne pas isoler des joueurs.
+    const density = cols > 40 ? 0.23 : 0.29;
     for (let r = 1; r < rows - 1; r++) {
       for (let c = 1; c < cols - 1; c++) {
         if (!safeZones.has(`${c},${r}`) && Math.random() < density) {
