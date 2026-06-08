@@ -20,6 +20,7 @@ export default function GameCanvas({ matchData, initialState }) {
   const dmgRef = useRef(null);
   const [hudState, setHudState] = useState({ players: [], timeLeft: matchData?.mode?.durationMs ?? 180000, matchInfo: null });
   const audioUnlockedRef = useRef(false);
+  const aliveRef = useRef(true);
 
   // Arène dimensionnée selon le nombre de joueurs (même formule que le serveur).
   const arena = arenaForPlayers(matchData?.mode?.totalPlayers || 2);
@@ -77,10 +78,12 @@ export default function GameCanvas({ matchData, initialState }) {
     sendInputIfChanged();
   }, []); // sendInputIfChanged est stable (deps stables) ; défini plus bas via hoisting de useCallback
   const handleTouchShoot = useCallback(() => {
+    if (!aliveRef.current) return;
     socket.current?.emit(EV.PLAYER_SHOOT);
     if (audioUnlockedRef.current) audio.shoot();
   }, [socket]);
   const handleTouchPing = useCallback(() => {
+    if (!aliveRef.current) return;
     socket.current?.emit(EV.PLAYER_PING);
     if (audioUnlockedRef.current) audio.ping();
   }, [socket]);
@@ -139,6 +142,8 @@ export default function GameCanvas({ matchData, initialState }) {
     };
     const onState = (state) => {
       rendererRef.current?.setState({ ...state, walls: wallsRef.current });
+      const me = state.players?.[myIdxRef.current];
+      if (me) aliveRef.current = me.hp > 0;
       setHudState(h => ({ ...h, players: state.players || [], timeLeft: state.timeLeft, suddenDeath: state.suddenDeath }));
     };
     const onHit = ({ playerIndex }) => {
@@ -172,11 +177,11 @@ export default function GameCanvas({ matchData, initialState }) {
       if (SCROLL_KEYS.has(e.code)) e.preventDefault();
       if (keysRef.current[e.code]) return;
       keysRef.current[e.code] = true;
-      if (e.code === 'Space') {
+      if (e.code === 'Space' && aliveRef.current) {
         socket.current?.emit(EV.PLAYER_PING);
         if (audioUnlockedRef.current) audio.ping();
       }
-      if (e.code === 'KeyF' || e.code === 'Enter') {
+      if ((e.code === 'KeyF' || e.code === 'Enter') && aliveRef.current) {
         e.preventDefault();
         socket.current?.emit(EV.PLAYER_SHOOT);
         if (audioUnlockedRef.current) audio.shoot();

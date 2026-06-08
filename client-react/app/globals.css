@@ -608,9 +608,8 @@ body::after {
   animation: champ-in 0.7s cubic-bezier(.34,1.56,.64,1) 0.35s both;
 }
 @keyframes champ-in {
-  0% { opacity: 0; transform: scale(0.7) translateY(20px); filter: blur(8px); }
-  99% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
-  100% { opacity: 1; transform: scale(1) translateY(0); filter: none; }
+  0% { opacity: 0; transform: scale(0.7) translateY(20px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 .champion-verdict {
   font-family: var(--font-display); font-weight: 700;
