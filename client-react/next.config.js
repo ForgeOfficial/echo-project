@@ -3,6 +3,9 @@
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3001';
 
 const nextConfig = {
+  // Autorise l'import de ../shared (source unique client/serveur des constantes
+  // de jeu) depuis l'extérieur du dossier Next.
+  experimental: { externalDir: true },
   async rewrites() {
     return [
       { source: '/api/:path*', destination: `${SERVER_URL}/api/:path*` },

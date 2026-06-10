@@ -19,8 +19,15 @@ export class GameRenderer {
     // Arène dynamique (taille selon le nb de joueurs) : valeur par défaut puis
     // remplacée par setArena() dès qu'on connaît la partie.
     this.arena = { CELL_SIZE: ARENA.CELL_SIZE, COLS: ARENA.COLS, ROWS: ARENA.ROWS, WIDTH: ARENA.WIDTH, HEIGHT: ARENA.HEIGHT };
-    this.canvas.width = this.arena.WIDTH;
-    this.canvas.height = this.arena.HEIGHT;
+    // Rendu HiDPI : le canvas est en pixels physiques (plafonné à 2× pour la
+    // perf), tout le dessin reste en coordonnées logiques via setTransform.
+    this._dpr = Math.min(2, window.devicePixelRatio || 1);
+    this._applySize();
+    // Sprites pré-rendus (balles, murs, fond) : remplacent shadowBlur et les
+    // gradients recréés à chaque frame — trop coûteux à 60fps.
+    this._spriteCache = new Map();
+    this._bg = null;
+    this._wallFogAt = 0;
     this.myPlayerIndex = 0;
     this.myTeam = 0;
     this.teamColors = DEFAULT_TEAM_COLORS;
@@ -66,11 +73,24 @@ export class GameRenderer {
     return (s.players || []).filter(p => p && p.team === this.myTeam && p.hp > 0 && p.x != null);
   }
 
+  // Taille physique = logique × dpr ; taille CSS = logique. Le transform fait
+  // que tout le code de dessin continue de raisonner en coordonnées logiques.
+  _applySize() {
+    const dpr = this._dpr, W = this.arena.WIDTH, H = this.arena.HEIGHT;
+    this.canvas.width = Math.round(W * dpr);
+    this.canvas.height = Math.round(H * dpr);
+    this.canvas.style.width = `${W}px`;
+    this.canvas.style.height = `${H}px`;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
   _makeLayer() {
     const c = document.createElement('canvas');
-    c.width = this.arena.WIDTH;
-    c.height = this.arena.HEIGHT;
-    return { canvas: c, ctx: c.getContext('2d') };
+    c.width = Math.round(this.arena.WIDTH * this._dpr);
+    c.height = Math.round(this.arena.HEIGHT * this._dpr);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
+    return { canvas: c, ctx };
   }
 
   // Adopte des dimensions d'arène (canvas + calques offscreen) si elles changent.
@@ -78,11 +98,83 @@ export class GameRenderer {
     if (!arena || !arena.WIDTH || !arena.HEIGHT) return;
     if (arena.WIDTH === this.arena.WIDTH && arena.HEIGHT === this.arena.HEIGHT) return;
     this.arena = { ...arena };
-    this.canvas.width = arena.WIDTH;
-    this.canvas.height = arena.HEIGHT;
+    this._applySize();
     this._scene = this._makeLayer();
     this._mask = this._makeLayer();
     this._fog = this._makeLayer();
+    this._bg = null;
+  }
+
+  // Fond statique (abysse + grille) pré-rendu une fois par taille d'arène :
+  // évite un gradient radial plein écran et ~70 strokes par frame.
+  _buildBg() {
+    const layer = this._makeLayer();
+    const ctx = layer.ctx;
+    const W = this.arena.WIDTH, H = this.arena.HEIGHT, S = this.arena.CELL_SIZE;
+    const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
+    bg.addColorStop(0, '#06141f');
+    bg.addColorStop(1, '#01060d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(0,255,255,0.03)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = S; x < W; x += S) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let y = S; y < H; y += S) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+    return layer;
+  }
+
+  // Sprite « balle » (cœur blanc + halo couleur) : remplace le shadowBlur par
+  // projectile, rendu une seule fois par couleur puis blitté.
+  _dotSprite(color, coreR, glowR) {
+    const key = `${color}|${coreR}|${glowR}`;
+    let s = this._spriteCache.get(key);
+    if (s) return s;
+    const dpr = this._dpr, size = glowR * 2;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(size * dpr);
+    c.height = Math.ceil(size * dpr);
+    const x = c.getContext('2d');
+    x.scale(dpr, dpr);
+    const g = x.createRadialGradient(glowR, glowR, 0, glowR, glowR, glowR);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(coreR / glowR, '#ffffff');
+    g.addColorStop(Math.min(1, coreR / glowR + 0.12), `rgba(${color},0.85)`);
+    g.addColorStop(1, `rgba(${color},0)`);
+    x.fillStyle = g;
+    x.beginPath(); x.arc(glowR, glowR, glowR, 0, Math.PI * 2); x.fill();
+    s = { canvas: c, size };
+    this._spriteCache.set(key, s);
+    return s;
+  }
+
+  // Sprite « bloc de mur » : le dégradé + contour est identique pour tous les
+  // murs → rendu une fois, puis un drawImage par mur visible.
+  _wallSprite() {
+    const S = this.arena.CELL_SIZE;
+    if (this._wallSpriteC && this._wallSpriteFor === S) return this._wallSpriteC;
+    const sz = S - WALL.PAD * 2;
+    const dpr = this._dpr;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(sz * dpr);
+    c.height = Math.ceil(sz * dpr);
+    const x = c.getContext('2d');
+    x.scale(dpr, dpr);
+    const g = x.createLinearGradient(0, 0, 0, sz);
+    g.addColorStop(0, '#123047');
+    g.addColorStop(1, '#0a1c2c');
+    x.fillStyle = g;
+    this._roundRect(x, 0, 0, sz, sz, 6);
+    x.fill();
+    x.strokeStyle = 'rgba(0,255,255,0.22)';
+    x.lineWidth = 1;
+    this._roundRect(x, 0.5, 0.5, sz - 1, sz - 1, 6);
+    x.stroke();
+    this._wallSpriteC = c;
+    this._wallSpriteFor = S;
+    this._wallSpriteSz = sz;
+    return c;
   }
 
   start() { this._rafId = requestAnimationFrame(ts => this._loop(ts)); }
@@ -347,11 +439,8 @@ export class GameRenderer {
         ctx.strokeStyle = tg; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tx, ty); ctx.stroke();
       }
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, PROJECTILE.RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
-      ctx.shadowColor = `rgba(${color},1)`; ctx.shadowBlur = 16;
-      ctx.fill();
+      const sp = this._dotSprite(color, PROJECTILE.RADIUS, 16);
+      ctx.drawImage(sp.canvas, s.x - 16, s.y - 16, sp.size, sp.size);
     }
     ctx.restore();
   }
@@ -409,6 +498,7 @@ export class GameRenderer {
     // partout où la lumière les éclaire, et c'est le masque (dégradé) qui gère
     // le fondu doux du bord — plus de coupure nette au milieu de la lumière.
     const REVEAL_R = 118;
+    const REVEAL_R2 = REVEAL_R * REVEAL_R; // comparaisons au carré : pas de sqrt par cellule
     const reach = Math.ceil(REVEAL_R / S);
     for (const f of this._friendlies(s)) {
       const pc = Math.floor(f.x / S), pr = Math.floor(f.y / S);
@@ -416,8 +506,8 @@ export class GameRenderer {
         for (let dc = -reach; dc <= reach; dc++) {
           const r = pr + dr, c = pc + dc;
           if (r < 0 || r >= A.ROWS || c < 0 || c >= A.COLS) continue;
-          const cx = c * S + S / 2, cy = r * S + S / 2;
-          if (Math.hypot(cx - f.x, cy - f.y) <= REVEAL_R) set.add(r * A.COLS + c);
+          const dx = c * S + S / 2 - f.x, dy = r * S + S / 2 - f.y;
+          if (dx * dx + dy * dy <= REVEAL_R2) set.add(r * A.COLS + c);
         }
       }
     }
@@ -428,16 +518,18 @@ export class GameRenderer {
         const elapsed = now - wave.startTime;
         const front = Math.min((elapsed / 1000) * SONAR.SPEED, SONAR.MAX_RADIUS);
         if (front <= 0) continue;
-        const inner = front - lingerDist;
+        const inner = Math.max(0, front - lingerDist);
+        const front2 = front * front, inner2 = inner * inner;
+        const max2 = SONAR.MAX_RADIUS * SONAR.MAX_RADIUS;
         const minC = Math.max(0, Math.floor((wave.x - front) / S));
         const maxC = Math.min(A.COLS - 1, Math.floor((wave.x + front) / S));
         const minR = Math.max(0, Math.floor((wave.y - front) / S));
         const maxR = Math.min(A.ROWS - 1, Math.floor((wave.y + front) / S));
         for (let r = minR; r <= maxR; r++) {
           for (let c = minC; c <= maxC; c++) {
-            const cx = c * S + S / 2, cy = r * S + S / 2;
-            const dist = Math.hypot(cx - wave.x, cy - wave.y);
-            if (dist <= SONAR.MAX_RADIUS && dist <= front && dist >= inner) set.add(r * A.COLS + c);
+            const dx = c * S + S / 2 - wave.x, dy = r * S + S / 2 - wave.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= max2 && d2 <= front2 && d2 >= inner2) set.add(r * A.COLS + c);
           }
         }
       }
@@ -461,19 +553,21 @@ export class GameRenderer {
 
     const s = this._sampleState();
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
-    // Brouillard mural local (remplace la grille de visibilité serveur), calculé
-    // une fois par frame et lu par _isVisible (_drawWalls).
-    this._wallFog = s ? this._computeWallFog(s, now) : null;
+    // Brouillard mural local (remplace la grille de visibilité serveur), lu par
+    // _isVisible (_drawWalls). Recalculé au rythme des ticks serveur (~30Hz),
+    // pas à chaque frame : la géométrie n'évolue pas plus vite.
+    if (!s) {
+      this._wallFog = null;
+    } else if (now - this._wallFogAt >= 33 || !this._wallFog) {
+      this._wallFog = this._computeWallFog(s, now);
+      this._wallFogAt = now;
+    }
 
     if (s && s.suddenDeath) { this._drawSuddenDeath(ctx, s, now); return; }
 
-    // ——— 1. Fond : abysse en dégradé ———
-    const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
-    bg.addColorStop(0, '#06141f');
-    bg.addColorStop(1, '#01060d');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, W, H);
-    this._drawGrid(now);
+    // ——— 1. Fond : abysse + grille (calque statique pré-rendu) ———
+    if (!this._bg) this._bg = this._buildBg();
+    ctx.drawImage(this._bg.canvas, 0, 0, W, H);
 
     if (!s) { this._drawFrame(now); return; }
 
@@ -489,9 +583,9 @@ export class GameRenderer {
     fctx.fillRect(0, 0, W, H);
     fctx.save();
     fctx.globalCompositeOperation = 'destination-out';
-    fctx.drawImage(this._mask.canvas, 0, 0);
+    fctx.drawImage(this._mask.canvas, 0, 0, W, H);
     fctx.restore();
-    ctx.drawImage(this._fog.canvas, 0, 0);
+    ctx.drawImage(this._fog.canvas, 0, 0, W, H);
 
     // ——— 2b. Murs découpés par la lumière (le masque gère le fondu du bord) ———
     const sctx = this._scene.ctx;
@@ -499,9 +593,9 @@ export class GameRenderer {
     this._drawWalls(sctx, s);
     sctx.save();
     sctx.globalCompositeOperation = 'destination-in';
-    sctx.drawImage(this._mask.canvas, 0, 0);
+    sctx.drawImage(this._mask.canvas, 0, 0, W, H);
     sctx.restore();
-    ctx.drawImage(this._scene.canvas, 0, 0);
+    ctx.drawImage(this._scene.canvas, 0, 0, W, H);
 
     // ——— 3. Zone toxique (gaz) derrière les entités ———
     if (s.zone) this._drawZone(ctx, s, now);
@@ -537,12 +631,11 @@ export class GameRenderer {
     ctx.save();
     ctx.strokeStyle = `rgba(255,60,80,${0.05 + 0.03 * pulse})`;
     ctx.lineWidth = 1;
-    for (let x = this.arena.CELL_SIZE; x < W; x += this.arena.CELL_SIZE) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    for (let y = this.arena.CELL_SIZE; y < H; y += this.arena.CELL_SIZE) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    }
+    ctx.beginPath();
+    const S = this.arena.CELL_SIZE;
+    for (let x = S; x < W; x += S) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let y = S; y < H; y += S) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
     ctx.restore();
 
     this._drawProjectiles(ctx, s);
@@ -559,28 +652,14 @@ export class GameRenderer {
     this._drawHitReveals(ctx, now);
 
     ctx.save();
+    ctx.strokeStyle = `rgba(255,60,80,${(0.6 + 0.3 * pulse) * 0.3})`;
+    ctx.lineWidth = 8;
+    ctx.strokeRect(2, 2, W - 4, H - 4);
     ctx.strokeStyle = `rgba(255,60,80,${0.6 + 0.3 * pulse})`;
     ctx.lineWidth = 2.5;
-    ctx.shadowColor = 'rgba(255,60,80,0.7)';
-    ctx.shadowBlur = 16;
     ctx.strokeRect(2, 2, W - 4, H - 4);
     ctx.restore();
     this._drawVignette();
-  }
-
-  _drawGrid(now) {
-    const ctx = this.ctx;
-    const pulse = 0.025 + 0.012 * Math.sin(now / 1400);
-    ctx.save();
-    ctx.strokeStyle = `rgba(0,255,255,${pulse})`;
-    ctx.lineWidth = 1;
-    for (let x = this.arena.CELL_SIZE; x < this.arena.WIDTH; x += this.arena.CELL_SIZE) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, this.arena.HEIGHT); ctx.stroke();
-    }
-    for (let y = this.arena.CELL_SIZE; y < this.arena.HEIGHT; y += this.arena.CELL_SIZE) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(this.arena.WIDTH, y); ctx.stroke();
-    }
-    ctx.restore();
   }
 
   // Masque de lumière doux : halos des coéquipiers (vision partagée) + disques
@@ -628,21 +707,13 @@ export class GameRenderer {
 
   _drawWalls(ctx, s) {
     if (!s.walls) return;
-    const R = 6;
-    s.walls.forEach(w => {
-      if (!this._isVisible(s, w.x + this.arena.CELL_SIZE / 2, w.y + this.arena.CELL_SIZE / 2)) return;
-      const x = w.x + WALL.PAD, y = w.y + WALL.PAD, sz = this.arena.CELL_SIZE - WALL.PAD * 2;
-      const g = ctx.createLinearGradient(x, y, x, y + sz);
-      g.addColorStop(0, '#123047');
-      g.addColorStop(1, '#0a1c2c');
-      ctx.fillStyle = g;
-      this._roundRect(ctx, x, y, sz, sz, R);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,255,255,0.22)';
-      ctx.lineWidth = 1;
-      this._roundRect(ctx, x + 0.5, y + 0.5, sz - 1, sz - 1, R);
-      ctx.stroke();
-    });
+    const sprite = this._wallSprite();
+    const sz = this._wallSpriteSz;
+    const half = this.arena.CELL_SIZE / 2;
+    for (const w of s.walls) {
+      if (!this._isVisible(s, w.x + half, w.y + half)) continue;
+      ctx.drawImage(sprite, w.x + WALL.PAD, w.y + WALL.PAD, sz, sz);
+    }
   }
 
   _drawSonarWaves(ctx, s, now) {
@@ -655,12 +726,14 @@ export class GameRenderer {
       if (progress >= 1 || radius <= 0) return;
       const alpha = Math.max(0, 1 - progress);
       const color = this._teamColor(s.players?.[wave.playerIndex]?.team);
+      // crête : passe large translucide (glow) + trait net, sans shadowBlur
       ctx.beginPath();
       ctx.arc(wave.x, wave.y, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${color},${alpha * 0.22})`;
+      ctx.lineWidth = 7;
+      ctx.stroke();
       ctx.strokeStyle = `rgba(${color},${alpha * 0.75})`;
       ctx.lineWidth = 1.5;
-      ctx.shadowColor = `rgba(${color},0.7)`;
-      ctx.shadowBlur = 16;
       ctx.stroke();
       // léger halo intérieur qui adoucit la transition vers la traîne révélée
       if (radius > 24) {
@@ -668,7 +741,6 @@ export class GameRenderer {
         ctx.arc(wave.x, wave.y, radius - 12, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(${color},${alpha * 0.14})`;
         ctx.lineWidth = 6;
-        ctx.shadowBlur = 8;
         ctx.stroke();
       }
     });
@@ -695,12 +767,8 @@ export class GameRenderer {
         ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tx, ty); ctx.stroke();
       }
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, PROJECTILE.RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
-      ctx.shadowColor = `rgba(${color},1)`;
-      ctx.shadowBlur = 16;
-      ctx.fill();
+      const sp = this._dotSprite(color, PROJECTILE.RADIUS, 16);
+      ctx.drawImage(sp.canvas, p.x - 16, p.y - 16, sp.size, sp.size);
     });
     ctx.restore();
   }
@@ -780,8 +848,6 @@ export class GameRenderer {
     ctx.strokeStyle = `rgba(${col},0.92)`;
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
-    ctx.shadowColor = `rgba(${col},0.7)`;
-    ctx.shadowBlur = 7;
     const r = baseR * breathe;
     const seg = (Math.PI / 2) * 0.4;           // longueur de chaque arc
     for (let i = 0; i < 4; i++) {
@@ -797,8 +863,6 @@ export class GameRenderer {
     ctx.save();
     ctx.translate(0, bob);
     ctx.fillStyle = `rgba(${col},0.9)`;
-    ctx.shadowColor = `rgba(${col},0.85)`;
-    ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.moveTo(0, 5);
     ctx.lineTo(-5, -3);
@@ -817,9 +881,11 @@ export class GameRenderer {
     ctx.globalAlpha = alpha;
     ctx.translate(p.x, p.y);
 
+    // Halo un peu plus présent qu'avant : il compense la disparition du
+    // shadowBlur sur le cœur (glow désormais porté uniquement par ce gradient).
     const haloR = self ? 34 : 28;
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, haloR);
-    glow.addColorStop(0, `rgba(${color},${self ? 0.32 : 0.28})`);
+    glow.addColorStop(0, `rgba(${color},${self ? 0.42 : 0.38})`);
     glow.addColorStop(1, `rgba(${color},0)`);
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(0, 0, haloR, 0, Math.PI * 2); ctx.fill();
@@ -842,8 +908,6 @@ export class GameRenderer {
 
     ctx.save();
     ctx.rotate(angle);
-    ctx.shadowColor = `rgba(${color},0.9)`;
-    ctx.shadowBlur = 10;
     ctx.fillStyle = `rgba(${color},0.95)`;
     ctx.beginPath();
     ctx.moveTo(PLAYER.RADIUS + 10, 0);
@@ -860,8 +924,6 @@ export class GameRenderer {
     ctx.beginPath();
     ctx.arc(0, 0, PLAYER.RADIUS, 0, Math.PI * 2);
     ctx.fillStyle = core;
-    ctx.shadowColor = `rgba(${color},1)`;
-    ctx.shadowBlur = 18;
     ctx.fill();
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = `rgba(${color},1)`;
@@ -872,22 +934,26 @@ export class GameRenderer {
       if (p.fx.shield) {
         ctx.save();
         ctx.rotate(now / 600);
-        ctx.strokeStyle = 'rgba(140,205,255,0.95)';
-        ctx.lineWidth = 2; ctx.shadowColor = 'rgba(140,205,255,0.85)'; ctx.shadowBlur = 12;
         ctx.beginPath();
         const rr = PLAYER.RADIUS + 9;
         for (let i = 0; i < 6; i++) {
           const a = i * (Math.PI / 3), hx = Math.cos(a) * rr, hy = Math.sin(a) * rr;
           i ? ctx.lineTo(hx, hy) : ctx.moveTo(hx, hy);
         }
-        ctx.closePath(); ctx.stroke();
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(140,205,255,0.3)';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(140,205,255,0.95)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
         ctx.restore();
       }
       const buff = p.fx.burst ? '255,210,0' : p.fx.rapid ? '255,130,40' : p.fx.speed ? '0,230,255' : null;
       if (buff) {
         ctx.save();
         ctx.strokeStyle = `rgba(${buff},${0.45 + 0.3 * Math.sin(now / 120)})`;
-        ctx.lineWidth = 2; ctx.shadowColor = `rgba(${buff},0.7)`; ctx.shadowBlur = 8;
+        ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(0, 0, PLAYER.RADIUS + 12, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
       }
@@ -900,7 +966,6 @@ export class GameRenderer {
         ctx.arc(0, 0, PLAYER.RADIUS + 11, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cd);
         ctx.strokeStyle = `rgba(${color},0.55)`;
         ctx.lineWidth = 2.5;
-        ctx.shadowBlur = 0;
         ctx.stroke();
       }
     }
@@ -933,12 +998,11 @@ export class GameRenderer {
       ctx.beginPath(); ctx.arc(0, 0, r * 2.4, 0, Math.PI * 2); ctx.fill();
       // orbe losange
       ctx.scale(pop, pop);
-      ctx.shadowColor = `rgba(${col},0.9)`; ctx.shadowBlur = 16;
       ctx.fillStyle = `rgba(${col},0.92)`;
       ctx.beginPath();
       ctx.moveTo(0, -r); ctx.lineTo(r, 0); ctx.lineTo(0, r); ctx.lineTo(-r, 0); ctx.closePath();
       ctx.fill();
-      ctx.shadowBlur = 0; ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
       // icône
       ctx.fillStyle = '#fff';
       ctx.font = '700 15px Orbitron, monospace';
@@ -969,10 +1033,13 @@ export class GameRenderer {
     if (flash > 0) { ctx.fillStyle = `rgba(205,255,170,${0.75 * flash})`; ctx.fillRect(0, 0, W, H); }
     const { x, y } = this._nukeFx;
     ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, t * Math.hypot(W, H), 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(150,255,90,${(1 - t) * 0.3})`;
+    ctx.lineWidth = (6 * (1 - t) + 1) + 12;
+    ctx.stroke();
     ctx.strokeStyle = `rgba(150,255,90,${(1 - t) * 0.9})`;
     ctx.lineWidth = 6 * (1 - t) + 1;
-    ctx.shadowColor = 'rgba(150,255,90,0.85)'; ctx.shadowBlur = 26;
-    ctx.beginPath(); ctx.arc(x, y, t * Math.hypot(W, H), 0, Math.PI * 2); ctx.stroke();
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1010,18 +1077,17 @@ export class GameRenderer {
       // Onde de choc qui s'étend et s'estompe
       ctx.beginPath();
       ctx.arc(0, 0, 9 + ease * 30, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${color},${a * 0.3})`;
+      ctx.lineWidth = (0.5 + 2.5 * a) + 5;
+      ctx.stroke();
       ctx.strokeStyle = `rgba(${color},${a * 0.9})`;
       ctx.lineWidth = 0.5 + 2.5 * a;
-      ctx.shadowColor = `rgba(${color},0.9)`;
-      ctx.shadowBlur = 14;
       ctx.stroke();
 
       // Croix « hit-marker » en diagonale (style FPS) qui s'écarte légèrement
       const gap = 6 + ease * 7, len = 7;
       ctx.strokeStyle = `rgba(255,255,255,${a})`;
       ctx.lineWidth = 2;
-      ctx.shadowColor = 'rgba(255,255,255,0.8)';
-      ctx.shadowBlur = 6;
       for (let k = 0; k < 4; k++) {
         const ang = Math.PI / 4 + k * (Math.PI / 2);
         const ux = Math.cos(ang), uy = Math.sin(ang);
@@ -1073,13 +1139,13 @@ export class GameRenderer {
       if (a <= 0) continue;
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${color},${a * 0.25})`;
+      ctx.lineWidth = 10;
+      ctx.stroke();
       ctx.strokeStyle = `rgba(${color},${a * 0.8})`;
       ctx.lineWidth = 3;
-      ctx.shadowColor = `rgba(${color},0.8)`;
-      ctx.shadowBlur = 20;
       ctx.stroke();
     }
-    ctx.shadowBlur = 0;
 
     const dt = Math.min(50, now - this._lastCelebTs) / 1000;
     this._lastCelebTs = now;
@@ -1096,8 +1162,6 @@ export class GameRenderer {
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rot);
       ctx.fillStyle = p.white ? '#fff' : `rgb(${p.color})`;
-      ctx.shadowColor = p.white ? '#fff' : `rgba(${p.color},1)`;
-      ctx.shadowBlur = 8;
       ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 1.6);
       ctx.restore();
     });
@@ -1126,13 +1190,13 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.2 * Math.sin(now / 1000);
     ctx.save();
+    ctx.strokeStyle = `rgba(0,255,255,${pulse * 0.3})`;
+    ctx.lineWidth = 7;
+    ctx.strokeRect(2, 2, W - 4, H - 4);
     ctx.strokeStyle = `rgba(0,255,255,${pulse})`;
     ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(0,255,255,0.6)';
-    ctx.shadowBlur = 12;
     ctx.strokeRect(2, 2, W - 4, H - 4);
 
-    ctx.shadowBlur = 0;
     ctx.strokeStyle = `rgba(0,255,255,0.9)`;
     ctx.lineWidth = 2.5;
     const L = 26, o = 2;
@@ -1170,12 +1234,13 @@ export class GameRenderer {
     ctx.fillRect(z.x + z.w, z.y, W - (z.x + z.w), z.h);      // droite
 
     // Bord du sanctuaire : pointillés défilants, lumineux.
-    ctx.strokeStyle = `rgba(185,255,90,${0.6 + 0.3 * pulse})`;
-    ctx.lineWidth = 3;
-    ctx.shadowColor = 'rgba(150,255,50,0.9)';
-    ctx.shadowBlur = 16;
     ctx.setLineDash([14, 10]);
     ctx.lineDashOffset = -((now / 40) % 24);
+    ctx.strokeStyle = `rgba(185,255,90,${(0.6 + 0.3 * pulse) * 0.3})`;
+    ctx.lineWidth = 9;
+    ctx.strokeRect(z.x, z.y, z.w, z.h);
+    ctx.strokeStyle = `rgba(185,255,90,${0.6 + 0.3 * pulse})`;
+    ctx.lineWidth = 3;
     ctx.strokeRect(z.x, z.y, z.w, z.h);
     ctx.restore();
   }
@@ -1195,14 +1260,13 @@ export class GameRenderer {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
+    ctx.strokeStyle = `rgba(255,45,45,${(0.5 + 0.35 * pulse) * 0.3})`;
+    ctx.lineWidth = 14;
+    ctx.strokeRect(3, 3, W - 6, H - 6);
     ctx.strokeStyle = `rgba(255,45,45,${0.5 + 0.35 * pulse})`;
     ctx.lineWidth = 6;
-    ctx.shadowColor = 'rgba(255,45,45,0.85)';
-    ctx.shadowBlur = 22;
     ctx.strokeRect(3, 3, W - 6, H - 6);
 
-    ctx.shadowColor = 'rgba(190,255,70,0.9)';
-    ctx.shadowBlur = 14;
     ctx.fillStyle = `rgba(205,255,95,${0.82 + 0.18 * pulse})`;
     ctx.font = '900 26px Orbitron, monospace';
     ctx.textAlign = 'center';

@@ -49,18 +49,34 @@ export default function HomePage() {
     const canvas = bgRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    // Rendu HiDPI : pixels physiques = logiques × dpr, dessin en coordonnées
+    // logiques via setTransform (sinon le fond est flou sur écran Retina).
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    let vw = 0, vh = 0;
+    const applySize = () => {
+      vw = window.innerWidth; vh = window.innerHeight;
+      canvas.width = Math.round(vw * dpr);
+      canvas.height = Math.round(vh * dpr);
+      canvas.style.width = `${vw}px`;
+      canvas.style.height = `${vh}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    applySize();
     const waves = [];
 
-    const spawn = () => waves.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      r: 0,
-      maxR: 200 + Math.random() * 250,
-      color: Math.random() > 0.5 ? '0,255,255' : '255,0,255',
-      speed: 55 + Math.random() * 50,
-    });
+    const spawn = () => {
+      // Onglet masqué : la rAF est en pause mais pas l'interval → on borne
+      // pour éviter d'accumuler des vagues jamais consommées.
+      if (waves.length > 40) return;
+      waves.push({
+        x: Math.random() * vw,
+        y: Math.random() * vh,
+        r: 0,
+        maxR: 200 + Math.random() * 250,
+        color: Math.random() > 0.5 ? '0,255,255' : '255,0,255',
+        speed: 55 + Math.random() * 50,
+      });
+    };
 
     for (let i = 0; i < 6; i++) spawn();
     const interval = setInterval(spawn, 2200);
@@ -69,7 +85,7 @@ export default function HomePage() {
     let raf;
     const loop = (now) => {
       const dt = (now - last) / 1000; last = now;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, vw, vh);
       for (let i = waves.length - 1; i >= 0; i--) {
         const w = waves[i]; w.r += w.speed * Math.max(0, dt);
         const a = Math.max(0, 1 - w.r / w.maxR);
@@ -84,9 +100,8 @@ export default function HomePage() {
     };
     raf = requestAnimationFrame(loop);
 
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
-    window.addEventListener('resize', onResize);
-    return () => { cancelAnimationFrame(raf); clearInterval(interval); window.removeEventListener('resize', onResize); };
+    window.addEventListener('resize', applySize);
+    return () => { cancelAnimationFrame(raf); clearInterval(interval); window.removeEventListener('resize', applySize); };
   }, []);
 
   function handlePlay() {
