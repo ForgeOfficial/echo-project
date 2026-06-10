@@ -66,13 +66,20 @@ export default function Navbar() {
           <ThemeToggle />
           {user ? (
             <>
-              <Link href={`/profile/${user.pseudo}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '1rem' }}>{getRank(user.elo).icon}</span>
-                <span className="navbar-pseudo">{user.pseudo}</span>
-                <span className="navbar-elo">{user.elo}</span>
-              </Link>
+              {user.guest ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="navbar-pseudo">{user.pseudo}</span>
+                  <span className="navbar-elo">Invité</span>
+                </span>
+              ) : (
+                <Link href={`/profile/${user.pseudo}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1rem' }}>{getRank(user.elo).icon}</span>
+                  <span className="navbar-pseudo">{user.pseudo}</span>
+                  <span className="navbar-elo">{user.elo}</span>
+                </Link>
+              )}
               <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.35rem 0.8rem' }} onClick={logout}>
-                Déco
+                {user.guest ? 'Quitter' : 'Déco'}
               </button>
             </>
           ) : (

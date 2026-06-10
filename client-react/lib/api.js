@@ -53,6 +53,11 @@ export async function login(pseudo, password) {
   return safeJson(res);
 }
 
+export async function guestLogin(pseudo) {
+  const res = await apiFetch('/auth/guest', { method: 'POST', body: JSON.stringify({ pseudo }) });
+  return safeJson(res);
+}
+
 export async function logout() {
   await apiFetch('/auth/logout', { method: 'POST' });
   _accessToken = null;

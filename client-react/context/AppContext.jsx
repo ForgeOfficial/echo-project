@@ -6,6 +6,20 @@ import { EV } from '../lib/constants';
 
 const AppCtx = createContext(null);
 
+// Session invité : sans refresh token côté serveur, on conserve l'access token
+// (et le pseudo) en local pour survivre à un rechargement — notamment en
+// pleine partie, où le même userId doit être réutilisé pour se reconnecter.
+const GUEST_KEY = 'echo-guest';
+function saveGuest(accessToken, user) {
+  try { localStorage.setItem(GUEST_KEY, JSON.stringify({ accessToken, user })); } catch {}
+}
+function loadGuest() {
+  try { return JSON.parse(localStorage.getItem(GUEST_KEY) || 'null'); } catch { return null; }
+}
+function clearGuest() {
+  try { localStorage.removeItem(GUEST_KEY); } catch {}
+}
+
 export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
   const [onlineCount, setOnlineCount] = useState(0);
@@ -37,7 +51,16 @@ export function AppProvider({ children }) {
     api.onTokenChange((u) => { setUser(u); connectSocket(api.getToken()); });
     api.tryRefresh().then(ok => {
       // En cas de succès, onTokenChange a déjà (re)connecté le socket.
-      if (!ok) connectSocket(null);
+      if (ok) return;
+      // Pas de compte : on tente de restaurer une session invité locale.
+      const g = loadGuest();
+      if (g?.accessToken) {
+        api.setToken(g.accessToken);
+        setUser(g.user);
+        connectSocket(g.accessToken);
+      } else {
+        connectSocket(null);
+      }
     }).finally(() => setAuthReady(true));
     return () => {
       socketRef.current?.disconnect();
@@ -49,6 +72,7 @@ export function AppProvider({ children }) {
   const login = useCallback(async (pseudo, password) => {
     const data = await api.login(pseudo, password);
     if (data.error) return { error: data.error };
+    clearGuest(); // un vrai compte prend le pas sur toute session invité
     api.setToken(data.accessToken);
     setUser(data.user);
     connectSocket(data.accessToken);
@@ -58,6 +82,17 @@ export function AppProvider({ children }) {
   const register = useCallback(async (pseudo, password) => {
     const data = await api.register(pseudo, password);
     if (data.error) return { error: data.error };
+    clearGuest();
+    api.setToken(data.accessToken);
+    setUser(data.user);
+    connectSocket(data.accessToken);
+    return { ok: true };
+  }, [connectSocket]);
+
+  const guestLogin = useCallback(async (pseudo) => {
+    const data = await api.guestLogin(pseudo);
+    if (data.error) return { error: data.error };
+    saveGuest(data.accessToken, data.user);
     api.setToken(data.accessToken);
     setUser(data.user);
     connectSocket(data.accessToken);
@@ -65,13 +100,15 @@ export function AppProvider({ children }) {
   }, [connectSocket]);
 
   const logout = useCallback(async () => {
+    clearGuest();
     await api.logout();
+    api.setToken(null);
     setUser(null);
     connectSocket(null);
   }, [connectSocket]);
 
   return (
-    <AppCtx.Provider value={{ user, setUser, onlineCount, socket: socketRef, socketReady, authReady, login, register, logout }}>
+    <AppCtx.Provider value={{ user, setUser, onlineCount, socket: socketRef, socketReady, authReady, login, register, guestLogin, logout }}>
       {children}
     </AppCtx.Provider>
   );

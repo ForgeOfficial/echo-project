@@ -3,13 +3,15 @@ import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import Portal from './Portal';
 
-export default function AuthModal({ onClose }) {
-  const { login, register } = useApp();
-  const [tab, setTab] = useState('login');
+export default function AuthModal({ onClose, initialTab = 'login' }) {
+  const { login, register, guestLogin } = useApp();
+  const [tab, setTab] = useState(initialTab);
   const [loginData, setLoginData] = useState({ pseudo: '', password: '' });
   const [regData, setRegData] = useState({ pseudo: '', password: '' });
+  const [guestPseudo, setGuestPseudo] = useState('');
   const [loginErr, setLoginErr] = useState('');
   const [regErr, setRegErr] = useState('');
+  const [guestErr, setGuestErr] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleLogin(e) {
@@ -30,6 +32,15 @@ export default function AuthModal({ onClose }) {
     else onClose();
   }
 
+  async function handleGuest(e) {
+    e.preventDefault();
+    setLoading(true); setGuestErr('');
+    const result = await guestLogin(guestPseudo);
+    setLoading(false);
+    if (result.error) setGuestErr(result.error);
+    else onClose();
+  }
+
   return (
     <Portal>
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -37,10 +48,22 @@ export default function AuthModal({ onClose }) {
         <div className="modal-tabs">
           <button className={`modal-tab${tab === 'login' ? ' active' : ''}`} onClick={() => setTab('login')}>Connexion</button>
           <button className={`modal-tab${tab === 'register' ? ' active' : ''}`} onClick={() => setTab('register')}>Inscription</button>
+          <button className={`modal-tab${tab === 'guest' ? ' active' : ''}`} onClick={() => setTab('guest')}>Invité</button>
         </div>
         <button className="modal-close" onClick={onClose}>✕</button>
 
-        {tab === 'login' ? (
+        {tab === 'guest' ? (
+          <form className="auth-form" onSubmit={handleGuest}>
+            <h3>Jouer en invité</h3>
+            <input className="input-field" placeholder="Pseudo (3–20 caractères)" required autoComplete="off"
+              value={guestPseudo} onChange={e => setGuestPseudo(e.target.value)} />
+            <div className="form-error">{guestErr}</div>
+            <button className="btn" type="submit" disabled={loading}>
+              {loading ? 'Connexion...' : 'Jouer sans compte'}
+            </button>
+            <p className="auth-hint">Aucun mot de passe. Les parties en invité ne sont pas classées.</p>
+          </form>
+        ) : tab === 'login' ? (
           <form className="auth-form" onSubmit={handleLogin}>
             <h3>Connexion</h3>
             <input className="input-field" placeholder="Pseudo" required autoComplete="username"

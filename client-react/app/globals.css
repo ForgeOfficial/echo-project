@@ -318,6 +318,10 @@ body::after {
   font-family: var(--font-display); font-weight: 600; color: var(--text);
   font-size: 1.25rem; letter-spacing: -0.01em; margin-bottom: 0.4rem;
 }
+.auth-hint {
+  color: var(--text-dim); font-size: 0.74rem; line-height: 1.4;
+  text-align: center; margin-top: 0.2rem;
+}
 
 /* ═══════════════ CLASSEMENT ═══════════════ */
 .lb-container { max-width: 880px; margin: 0 auto; padding: 3rem 1.5rem; animation: rise 0.5s var(--ease-out) both; }

@@ -24,6 +24,12 @@ const LOBBY_GRACE_MS = 20000;
 
 let onlineCount = 0;
 
+// Un invité n'existe pas en base : son userId est préfixé « guest: » (cf.
+// /auth/guest). Sert à exclure ces parties de la persistance/Elo classés.
+function isGuestId(id) {
+  return typeof id === 'string' && id.startsWith('guest:');
+}
+
 function getPlayerInfo(socket) {
   try {
     const token = socket.handshake.auth.token;
@@ -351,9 +357,10 @@ async function _endGame(io, room, result) {
   const winnerTeam = (result && result.winnerTeam !== undefined) ? result.winnerTeam : engine.getWinnerTeam();
   const reason = result?.reason || 'normal';
 
-  // Persistance + Elo uniquement pour les modes classés (1v1 pour l'instant).
+  // Persistance + Elo uniquement pour les modes classés (1v1 pour l'instant),
+  // et jamais si un invité participe (pas de fiche en base → FK impossible).
   let eloDeltas = players.map(() => 0);
-  if (mode.ranked && players.length === 2) {
+  if (mode.ranked && players.length === 2 && !players.some(p => isGuestId(p.userId))) {
     const [p1, p2] = players;
     const [d1, d2] = calculateElo(p1.elo, p2.elo, winnerTeam);
     eloDeltas = [d1, d2];

@@ -142,7 +142,7 @@ export default function HomePage() {
               Tête-à-tête sonar. Chaque victoire compte au classement Elo.
             </p>
             <span className="mode-card-cta">
-              {user ? 'Jouer maintenant' : 'Se connecter pour jouer'}
+              {user ? 'Jouer maintenant' : 'Jouer — compte ou invité'}
             </span>
           </button>
 
@@ -212,7 +212,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} initialTab="guest" />}
       {showCustom && <CustomGameModal onClose={() => setShowCustom(false)} onCreate={createCustom} />}
     </div>
   );

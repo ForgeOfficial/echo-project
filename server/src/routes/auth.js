@@ -8,6 +8,9 @@ const { authenticate } = require('../middleware/authenticate');
 const router = express.Router();
 const BCRYPT_ROUNDS = 12;
 const ACCESS_TTL = '15m';
+// Les invités n'ont pas de refresh token : leur access token doit vivre assez
+// longtemps pour survivre à un rechargement de page en pleine partie.
+const GUEST_TTL = '12h';
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function signAccess(userId, pseudo) {
@@ -65,6 +68,19 @@ router.post('/login', async (req, res) => {
   });
   setCookieRefresh(res, rawRefresh);
   res.json({ accessToken, user: { id: user.id, pseudo: user.pseudo, elo: user.elo } });
+});
+
+// Jeu sans compte : on signe un token éphémère porteur d'un userId préfixé
+// « guest: » (jamais en base). Aucun mot de passe, aucun refresh token, aucune
+// écriture DB. Le flag `guest` permet au reste du jeu de l'identifier.
+router.post('/guest', async (req, res) => {
+  const { pseudo } = req.body;
+  if (!pseudo || !/^[a-zA-Z0-9_]{3,20}$/.test(pseudo)) {
+    return res.status(400).json({ error: 'Pseudo invalide (3-20 caractères, lettres/chiffres/_)' });
+  }
+  const userId = `guest:${crypto.randomUUID()}`;
+  const accessToken = jwt.sign({ userId, pseudo, guest: true }, process.env.JWT_SECRET, { expiresIn: GUEST_TTL });
+  res.json({ accessToken, user: { id: userId, pseudo, elo: 1000, guest: true } });
 });
 
 router.post('/refresh', async (req, res) => {
