@@ -72,8 +72,8 @@ export default function GamePage() {
     const wTeam = endData.winnerTeam;
     const result = wTeam === myTeam ? 'win' : wTeam === -1 ? 'draw' : 'lose';
     const mode = endData.mode ?? matchData?.mode;
-    const teamColors = mode?.teamColors ?? ['0,255,255', '255,0,255'];
-    const teamNames = mode?.teamNames ?? ['Cyan', 'Magenta'];
+    const teamColors = mode?.teamColors ?? ['255,255,255', '255,69,58'];
+    const teamNames = mode?.teamNames ?? ['Blanc', 'Rouge'];
     const teamSize = mode?.teamSize ?? 1;
     const players = endData.players ?? matchData?.players ?? [];
     const winners = wTeam >= 0 ? players.filter(p => p.team === wTeam).map(p => p.pseudo) : [];

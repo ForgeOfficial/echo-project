@@ -14,7 +14,7 @@ export default function ProfilePage() {
   }, [pseudo]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-dim)' }}>Chargement...</div>;
-  if (!data) return <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--magenta)' }}>Joueur introuvable</div>;
+  if (!data) return <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--warn)' }}>Joueur introuvable</div>;
 
   const rank = getRank(data.elo);
   const total = data.wins + data.losses + data.draws;
@@ -40,8 +40,8 @@ export default function ProfilePage() {
           { val: data.elo, lbl: 'Elo', color: rank.color },
           { val: data.wins, lbl: 'Victoires', color: 'var(--green)' },
           { val: total, lbl: 'Parties', color: 'var(--text)' },
-          { val: `${ratio}%`, lbl: 'Ratio', color: 'var(--cyan)' },
-          { val: `${avgAcc}%`, lbl: 'Précision', color: 'var(--cyan)' },
+          { val: `${ratio}%`, lbl: 'Ratio', color: 'var(--text)' },
+          { val: `${avgAcc}%`, lbl: 'Précision', color: 'var(--text)' },
         ].map(({ val, lbl, color }) => (
           <div key={lbl} className="stat-card">
             <span className="stat-value" style={{ color }}>{val}</span>

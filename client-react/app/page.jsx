@@ -73,7 +73,7 @@ export default function HomePage() {
         y: Math.random() * vh,
         r: 0,
         maxR: 200 + Math.random() * 250,
-        color: Math.random() > 0.5 ? '0,255,255' : '255,0,255',
+        color: '255,255,255',
         speed: 55 + Math.random() * 50,
       });
     };
@@ -92,8 +92,8 @@ export default function HomePage() {
         if (a <= 0 || w.r <= 0) { waves.splice(i, 1); continue; }
         ctx.beginPath();
         ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${w.color},${a * 0.28})`;
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(${w.color},${a * 0.09})`;
+        ctx.lineWidth = 1.25;
         ctx.stroke();
       }
       raf = requestAnimationFrame(loop);
@@ -119,7 +119,7 @@ export default function HomePage() {
             <span className="home-eyebrow-dot" aria-hidden />
             Sonar&nbsp;Arena
           </div>
-          <h1 className="home-title" data-text="ECHO">ECHO</h1>
+          <h1 className="home-title">ECHO</h1>
           <p className="home-tagline">
             <span>L&apos;arène est noire.</span>
             <span>Émets un ping.</span>
@@ -140,7 +140,7 @@ export default function HomePage() {
               Tête-à-tête sonar. Chaque victoire compte au classement Elo.
             </p>
             <span className="mode-card-cta">
-              {user ? '▶ JOUER' : 'Se connecter pour jouer'}
+              {user ? 'Jouer maintenant' : 'Se connecter pour jouer'}
             </span>
           </button>
 
@@ -199,7 +199,7 @@ export default function HomePage() {
               Chacun pour soi ou en équipes · effectif, durée, vies, et zone toxique qui rétrécit.
             </p>
           </div>
-          <span className="mode-card-cta">⚙ CONFIGURER</span>
+          <span className="mode-card-cta">Configurer</span>
         </button>
 
         {lobbyErr && <div className="lobby-error home-err">{lobbyErr}</div>}

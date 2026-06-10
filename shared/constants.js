@@ -48,12 +48,12 @@ const BONUS = {
   SPAWN_INTERVAL_MS: 14000, // cadence de base (modulée par la fréquence du mode)
   MAX_ON_MAP: 3,
   TYPES: {
-    burst:  { label: 'Rafale',   icon: '⚡', color: '255,210,0',   kind: 'timed',   dur: 8000, shots: 3, intervalMs: 90 },
-    life:   { label: 'Vie +1',   icon: '✚', color: '255,70,90',    kind: 'instant' },
-    speed:  { label: 'Vitesse',  icon: '»',  color: '0,230,255',   kind: 'timed',   dur: 6000, mult: 1.4 },
-    shield: { label: 'Bouclier', icon: '◈',  color: '120,200,255', kind: 'timed',   dur: 4000 },
-    rapid:  { label: 'Cadence',  icon: '⟫', color: '255,130,40',   kind: 'timed',   dur: 8000, mult: 0.4 },
-    nuke:   { label: 'Nuke',     icon: '☢', color: '150,255,90',   kind: 'instant', deathmatchOnly: true },
+    burst:  { label: 'Rafale',   icon: '⚡', color: '255,214,10',  kind: 'timed',   dur: 8000, shots: 3, intervalMs: 90 },
+    life:   { label: 'Vie +1',   icon: '✚', color: '255,69,58',    kind: 'instant' },
+    speed:  { label: 'Vitesse',  icon: '»',  color: '100,210,255', kind: 'timed',   dur: 6000, mult: 1.4 },
+    shield: { label: 'Bouclier', icon: '◈',  color: '10,132,255',  kind: 'timed',   dur: 4000 },
+    rapid:  { label: 'Cadence',  icon: '⟫', color: '255,159,10',   kind: 'timed',   dur: 8000, mult: 0.4 },
+    nuke:   { label: 'Nuke',     icon: '☢', color: '163,230,53',   kind: 'instant', deathmatchOnly: true },
   },
 };
 const BONUS_TYPE_IDS = Object.keys(BONUS.TYPES);

@@ -269,8 +269,8 @@ export default function GameCanvas({ matchData, initialState }) {
   const info = matchInfo || matchData;
   const mode = info?.mode;
   const roster = info?.players ?? [];
-  const teamColors = mode?.teamColors ?? ['0,255,255', '255,0,255'];
-  const teamNames = mode?.teamNames ?? ['Cyan', 'Magenta'];
+  const teamColors = mode?.teamColors ?? ['255,255,255', '255,69,58'];
+  const teamNames = mode?.teamNames ?? ['Blanc', 'Rouge'];
   const teamSize = mode?.teamSize ?? 1;
   const teamCount = mode?.teamCount ?? 2;
   const maxHp = mode?.maxHp ?? PLAYER.MAX_HP;

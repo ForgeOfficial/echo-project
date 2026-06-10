@@ -20,16 +20,17 @@ function buildBonusConfig(cfg = {}, deathmatch, { intervalMul = 1, maxOnMap = BO
   };
 }
 
-// Palette néon : une couleur par équipe (FFA = une équipe par joueur). Jusqu'à 8.
+// Palette moderne (teintes vives mais raffinées) : une couleur par équipe
+// (FFA = une équipe par joueur). Jusqu'à 8.
 const TEAM_PALETTE = [
-  '0,255,255',    // cyan
-  '255,0,200',    // magenta
-  '255,210,0',    // or
-  '0,255,136',    // vert
-  '255,120,40',   // orange
-  '150,110,255',  // violet
-  '60,160,255',   // bleu
-  '255,70,120',   // rose
+  '100,210,255',  // cyan
+  '255,69,58',    // rouge
+  '255,214,10',   // jaune
+  '48,209,88',    // vert
+  '255,159,10',   // orange
+  '191,90,242',   // violet
+  '10,132,255',   // bleu
+  '255,55,95',    // rose
 ];
 
 const TEAM_NAMES_2 = ['Rouge', 'Bleu'];
@@ -146,8 +147,9 @@ const MODES = {
     bonus: { enabled: true, types: ['burst', 'life', 'speed', 'shield', 'rapid'], intervalMs: 24000, maxOnMap: 1 },
     waitForFull: true,
     autoBalance: true,
-    teamNames: ['Cyan', 'Magenta'],
-    teamColors: ['0,255,255', '255,0,255'],
+    // 1v1 monochrome : toi en blanc, l'adversaire en rouge signal.
+    teamNames: ['Blanc', 'Rouge'],
+    teamColors: ['255,255,255', '255,69,58'],
   },
   duo: {
     id: 'duo',
@@ -169,7 +171,7 @@ const MODES = {
     waitForFull: true,
     autoBalance: false, // 2v2 : choix manuel des équipes (Rouge/Bleu)
     teamNames: ['Rouge', 'Bleu'],
-    teamColors: ['255,59,72', '54,124,255'],
+    teamColors: ['255,69,58', '10,132,255'],
   },
 };
 

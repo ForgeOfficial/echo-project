@@ -1,6 +1,6 @@
 import { ARENA, PLAYER, SONAR, PROJECTILE, WALL, BONUS } from './constants';
 
-const DEFAULT_TEAM_COLORS = ['0,255,255', '255,0,255']; // équipe 0 cyan, 1 magenta
+const DEFAULT_TEAM_COLORS = ['255,255,255', '255,69,58']; // équipe 0 blanche, 1 rouge
 
 // Détection de proximité d'un ennemi : pleinement visible sous NEAR, fondu
 // progressif jusqu'à disparaître au-delà de FAR.
@@ -113,11 +113,11 @@ export class GameRenderer {
     const ctx = layer.ctx;
     const W = this.arena.WIDTH, H = this.arena.HEIGHT, S = this.arena.CELL_SIZE;
     const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
-    bg.addColorStop(0, '#06141f');
-    bg.addColorStop(1, '#01060d');
+    bg.addColorStop(0, '#101013');
+    bg.addColorStop(1, '#050506');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(0,255,255,0.03)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = S; x < W; x += S) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
@@ -163,12 +163,12 @@ export class GameRenderer {
     const x = c.getContext('2d');
     x.scale(dpr, dpr);
     const g = x.createLinearGradient(0, 0, 0, sz);
-    g.addColorStop(0, '#123047');
-    g.addColorStop(1, '#0a1c2c');
+    g.addColorStop(0, '#28282E');
+    g.addColorStop(1, '#161619');
     x.fillStyle = g;
     this._roundRect(x, 0, 0, sz, sz, 6);
     x.fill();
-    x.strokeStyle = 'rgba(0,255,255,0.22)';
+    x.strokeStyle = 'rgba(255,255,255,0.18)';
     x.lineWidth = 1;
     this._roundRect(x, 0.5, 0.5, sz - 1, sz - 1, 6);
     x.stroke();
@@ -631,7 +631,7 @@ export class GameRenderer {
     // de la lumière devient vraiment sombre → sensation d'être « dans l'ombre ».
     const fctx = this._fog.ctx;
     fctx.clearRect(0, 0, W, H);
-    fctx.fillStyle = 'rgba(1,3,9,0.9)';
+    fctx.fillStyle = 'rgba(2,2,4,0.9)';
     fctx.fillRect(0, 0, W, H);
     fctx.save();
     fctx.globalCompositeOperation = 'destination-out';
@@ -675,8 +675,8 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 400);
     const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
-    bg.addColorStop(0, '#1a0810');
-    bg.addColorStop(1, '#0a0206');
+    bg.addColorStop(0, '#170709');
+    bg.addColorStop(1, '#080304');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
@@ -1057,7 +1057,7 @@ export class GameRenderer {
       ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
       // icône
       ctx.fillStyle = '#fff';
-      ctx.font = '700 15px Orbitron, monospace';
+      ctx.font = '600 15px "Clash Display", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(def.icon, 0, 1);
       ctx.restore();
@@ -1082,14 +1082,14 @@ export class GameRenderer {
     if (el >= DUR) { this._nukeFx = null; return; }
     const W = this.arena.WIDTH, H = this.arena.HEIGHT, t = el / DUR;
     const flash = Math.max(0, 1 - el / 260);
-    if (flash > 0) { ctx.fillStyle = `rgba(205,255,170,${0.75 * flash})`; ctx.fillRect(0, 0, W, H); }
+    if (flash > 0) { ctx.fillStyle = `rgba(225,255,190,${0.75 * flash})`; ctx.fillRect(0, 0, W, H); }
     const { x, y } = this._nukeFx;
     ctx.save();
     ctx.beginPath(); ctx.arc(x, y, t * Math.hypot(W, H), 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(150,255,90,${(1 - t) * 0.3})`;
+    ctx.strokeStyle = `rgba(163,230,53,${(1 - t) * 0.3})`;
     ctx.lineWidth = (6 * (1 - t) + 1) + 12;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(150,255,90,${(1 - t) * 0.9})`;
+    ctx.strokeStyle = `rgba(163,230,53,${(1 - t) * 0.9})`;
     ctx.lineWidth = 6 * (1 - t) + 1;
     ctx.stroke();
     ctx.restore();
@@ -1163,7 +1163,7 @@ export class GameRenderer {
     const bg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, W * 0.9);
     bg.addColorStop(0, `rgba(${color},${0.22 + 0.5 * flash})`);
     bg.addColorStop(0.5, `rgba(${color},${0.06 + 0.16 * flash})`);
-    bg.addColorStop(1, '#01060d');
+    bg.addColorStop(1, '#050506');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
@@ -1237,21 +1237,20 @@ export class GameRenderer {
     this._drawVignette();
   }
 
+  // Cadre minimaliste : un liseré blanc discret qui respire à peine, et des
+  // coins légèrement plus marqués. Plus de néon pulsé — l'arène reste sobre.
   _drawFrame(now) {
     const ctx = this.ctx;
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
-    const pulse = 0.5 + 0.2 * Math.sin(now / 1000);
+    const pulse = 0.5 + 0.5 * Math.sin(now / 1600);
     ctx.save();
-    ctx.strokeStyle = `rgba(0,255,255,${pulse * 0.3})`;
-    ctx.lineWidth = 7;
-    ctx.strokeRect(2, 2, W - 4, H - 4);
-    ctx.strokeStyle = `rgba(0,255,255,${pulse})`;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, W - 4, H - 4);
+    ctx.strokeStyle = `rgba(255,255,255,${0.08 + 0.04 * pulse})`;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
 
-    ctx.strokeStyle = `rgba(0,255,255,0.9)`;
-    ctx.lineWidth = 2.5;
-    const L = 26, o = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 2;
+    const L = 22, o = 2;
     const corners = [
       [o, o, 1, 1], [W - o, o, -1, 1], [o, H - o, 1, -1], [W - o, H - o, -1, -1],
     ];
@@ -1279,7 +1278,7 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 350);
     ctx.save();
-    ctx.fillStyle = `rgba(150,255,50,${0.10 + 0.07 * pulse})`;
+    ctx.fillStyle = `rgba(163,230,53,${0.10 + 0.07 * pulse})`;
     ctx.fillRect(0, 0, W, z.y);                              // haut
     ctx.fillRect(0, z.y + z.h, W, H - (z.y + z.h));          // bas
     ctx.fillRect(0, z.y, z.x, z.h);                          // gauche
@@ -1288,10 +1287,10 @@ export class GameRenderer {
     // Bord du sanctuaire : pointillés défilants, lumineux.
     ctx.setLineDash([14, 10]);
     ctx.lineDashOffset = -((now / 40) % 24);
-    ctx.strokeStyle = `rgba(185,255,90,${(0.6 + 0.3 * pulse) * 0.3})`;
+    ctx.strokeStyle = `rgba(190,242,100,${(0.6 + 0.3 * pulse) * 0.3})`;
     ctx.lineWidth = 9;
     ctx.strokeRect(z.x, z.y, z.w, z.h);
-    ctx.strokeStyle = `rgba(185,255,90,${0.6 + 0.3 * pulse})`;
+    ctx.strokeStyle = `rgba(190,242,100,${0.6 + 0.3 * pulse})`;
     ctx.lineWidth = 3;
     ctx.strokeRect(z.x, z.y, z.w, z.h);
     ctx.restore();
@@ -1307,8 +1306,8 @@ export class GameRenderer {
     const pulse = 0.5 + 0.5 * Math.sin(now / 170);
     ctx.save();
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.18, W / 2, H / 2, W * 0.72);
-    g.addColorStop(0, 'rgba(120,255,40,0)');
-    g.addColorStop(1, `rgba(150,255,40,${0.22 + 0.2 * pulse})`);
+    g.addColorStop(0, 'rgba(163,230,53,0)');
+    g.addColorStop(1, `rgba(163,230,53,${0.22 + 0.2 * pulse})`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
@@ -1319,8 +1318,8 @@ export class GameRenderer {
     ctx.lineWidth = 6;
     ctx.strokeRect(3, 3, W - 6, H - 6);
 
-    ctx.fillStyle = `rgba(205,255,95,${0.82 + 0.18 * pulse})`;
-    ctx.font = '900 26px Orbitron, monospace';
+    ctx.fillStyle = `rgba(212,255,120,${0.82 + 0.18 * pulse})`;
+    ctx.font = '600 24px "Clash Display", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('☠ ZONE TOXIQUE — REVIENS', W / 2, 38);
