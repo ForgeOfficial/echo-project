@@ -18,10 +18,15 @@ export const viewport = {
   themeColor: '#060607',
 };
 
+// Appliqué avant le premier rendu pour éviter le flash de thème (FOUC).
+// Sombre par défaut (identité du jeu) ; « light » uniquement si choisi.
+const themeInit = `try{if(localStorage.getItem('echo-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`;
+
 export default function RootLayout({ children }) {
   return (
-    <html lang="fr">
+    <html lang="fr" suppressHydrationWarning>
       <body>
+        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         <AppProvider>
           <Navbar />
           <main className="page-wrap">{children}</main>

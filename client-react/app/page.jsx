@@ -73,7 +73,6 @@ export default function HomePage() {
         y: Math.random() * vh,
         r: 0,
         maxR: 200 + Math.random() * 250,
-        color: '255,255,255',
         speed: 55 + Math.random() * 50,
       });
     };
@@ -85,6 +84,9 @@ export default function HomePage() {
     let raf;
     const loop = (now) => {
       const dt = (now - last) / 1000; last = now;
+      // Encre du thème courant : ondes blanches sur fond sombre, charbon en clair.
+      const light = document.documentElement.dataset.theme === 'light';
+      const ink = light ? '9,9,11' : '255,255,255';
       ctx.clearRect(0, 0, vw, vh);
       for (let i = waves.length - 1; i >= 0; i--) {
         const w = waves[i]; w.r += w.speed * Math.max(0, dt);
@@ -92,7 +94,7 @@ export default function HomePage() {
         if (a <= 0 || w.r <= 0) { waves.splice(i, 1); continue; }
         ctx.beginPath();
         ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${w.color},${a * 0.09})`;
+        ctx.strokeStyle = `rgba(${ink},${a * 0.09})`;
         ctx.lineWidth = 1.25;
         ctx.stroke();
       }
