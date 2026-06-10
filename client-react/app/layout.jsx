@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar';
 
 export const metadata = {
   title: 'ECHO — Sonar Duel',
-  description: "L'arène est noire. Émets un ping. Traque ton adversaire.",
+  description: "Vois par le son. Frappe dans le noir. Sois le dernier écho.",
 };
 
 // Mobile : on bloque le zoom/scroll parasites pendant le jeu et on étend le

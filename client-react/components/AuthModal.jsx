@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import Portal from './Portal';
 
 export default function AuthModal({ onClose }) {
   const { login, register } = useApp();
@@ -30,6 +31,7 @@ export default function AuthModal({ onClose }) {
   }
 
   return (
+    <Portal>
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal-box">
         <div className="modal-tabs">
@@ -65,5 +67,6 @@ export default function AuthModal({ onClose }) {
         )}
       </div>
     </div>
+    </Portal>
   );
 }

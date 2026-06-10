@@ -123,9 +123,9 @@ export default function HomePage() {
           </div>
           <h1 className="home-title">ECHO</h1>
           <p className="home-tagline">
-            <span>L&apos;arène est noire.</span>
-            <span>Émets un ping.</span>
-            <span>Traque ton adversaire.</span>
+            <span>Vois par le son.</span>
+            <span>Frappe dans le noir.</span>
+            <span>Sois le dernier écho.</span>
           </p>
         </header>
 

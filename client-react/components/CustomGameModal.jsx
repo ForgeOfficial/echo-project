@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { arenaForPlayers } from '../lib/modes';
 import { BONUS, BONUS_TYPE_IDS } from '../lib/constants';
+import Portal from './Portal';
 
 const BONUS_FREQS = [
   { v: 'low', label: 'Rares' },
@@ -89,11 +90,16 @@ export default function CustomGameModal({ onClose, onCreate }) {
   }
 
   return (
+    <Portal>
     <div className="modal-overlay" onClick={onClose}>
       <div className="cg-box" onClick={e => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
-        <h3 className="cg-title">Partie personnalisée</h3>
+        <header className="cg-head">
+          <div className="cg-head-eyebrow">Configuration</div>
+          <h3 className="cg-title">Partie personnalisée</h3>
+          <button className="modal-close cg-head-close" onClick={onClose} aria-label="Fermer">✕</button>
+        </header>
 
+        <div className="cg-scroll">
         {/* Format */}
         <div className="cg-seg">
           <button type="button" className={format === 'ffa' ? 'active' : ''} onClick={() => setFormat('ffa')}>Chacun pour soi</button>
@@ -195,9 +201,13 @@ export default function CustomGameModal({ onClose, onCreate }) {
             </div>
           </div>
         )}
+        </div>
 
-        <button className="btn btn-lg cg-create" onClick={submit} disabled={tooMany}>Créer la partie</button>
+        <footer className="cg-foot">
+          <button className="btn btn-lg cg-create" onClick={submit} disabled={tooMany}>Créer la partie</button>
+        </footer>
       </div>
     </div>
+    </Portal>
   );
 }

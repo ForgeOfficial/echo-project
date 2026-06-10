@@ -48,14 +48,20 @@ export default function Navbar() {
   const pathname = usePathname();
   const [showAuth, setShowAuth] = useState(false);
 
+  // En partie, on retire les onglets de navigation pour une vue immersive :
+  // le logo reste le seul moyen (volontaire) de quitter l'arène.
+  const inGame = pathname?.startsWith('/games/');
+
   return (
     <>
-      <nav className="navbar">
+      <nav className={`navbar${inGame ? ' navbar--game' : ''}`}>
         <Link href="/" className="navbar-logo">ECHO</Link>
-        <div className="navbar-links">
-          <Link href="/" className={`navbar-link${pathname === '/' ? ' active' : ''}`}>Accueil</Link>
-          <Link href="/leaderboard" className={`navbar-link${pathname === '/leaderboard' ? ' active' : ''}`}>Classement</Link>
-        </div>
+        {!inGame && (
+          <div className="navbar-links">
+            <Link href="/" className={`navbar-link${pathname === '/' ? ' active' : ''}`}>Accueil</Link>
+            <Link href="/leaderboard" className={`navbar-link${pathname === '/leaderboard' ? ' active' : ''}`}>Classement</Link>
+          </div>
+        )}
         <div className="navbar-user">
           <ThemeToggle />
           {user ? (

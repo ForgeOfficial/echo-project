@@ -162,13 +162,22 @@ body::after {
 /* ═══════════════ NAVBAR ═══════════════ */
 .navbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 200;
-  height: 64px; display: flex; align-items: center;
-  justify-content: space-between; padding: 0 clamp(1.25rem, 4vw, 2.5rem);
+  height: 64px; align-items: center;
+  /* Grille 1fr / auto / 1fr : les onglets centraux restent parfaitement
+     centrés sur la page quels que soient les largeurs du logo et du bloc
+     utilisateur (le flex « space-between » les décalait vers la gauche). */
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  padding: 0 clamp(1.25rem, 4vw, 2.5rem);
   background: var(--nav-bg);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(20px) saturate(1.4);
   -webkit-backdrop-filter: blur(20px) saturate(1.4);
 }
+.navbar-logo { justify-self: start; }
+.navbar-links { justify-self: center; }
+.navbar-user { justify-self: end; }
+/* En partie : barre épurée, juste logo + utilisateur. */
+.navbar--game { grid-template-columns: 1fr 1fr; }
 .navbar-logo {
   font-family: var(--font-display); font-size: 1.25rem; font-weight: 600;
   color: var(--text); letter-spacing: 0.14em;
@@ -899,16 +908,42 @@ html[data-theme='light'] .game-shell {
   position: relative;
   background: var(--modal-bg);
   border: 1px solid var(--border);
-  border-radius: var(--r-lg); padding: 1.75rem;
-  width: 460px; max-width: 95vw; max-height: 92vh; overflow-y: auto;
+  border-radius: var(--r-lg);
+  width: 460px; max-width: 95vw; max-height: min(92vh, 760px);
+  overflow: hidden; /* le scroll vit dans .cg-scroll ; en-tête + pied figés */
   box-shadow: 0 40px 100px rgba(0,0,0,0.7), inset 0 1px 0 rgba(var(--ink),0.06);
-  display: flex; flex-direction: column; gap: 1rem;
+  display: flex; flex-direction: column;
   animation: pop-in 0.35s var(--ease-spring) both;
 }
+/* En-tête figé : ne défile pas, surmonte une fine ligne de séparation. */
+.cg-head {
+  position: relative; flex-shrink: 0;
+  padding: 1.5rem 1.75rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.cg-head-eyebrow {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.28em; text-indent: 0.28em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 0.35rem;
+}
+.cg-head-close { top: 1.25rem; right: 1.25rem; }
+/* Corps défilant : occupe l'espace restant, masque le défilement aux extrémités. */
+.cg-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 1.35rem 1.75rem 1.5rem;
+  display: flex; flex-direction: column; gap: 1rem;
+  scrollbar-width: thin;
+}
 /* Sans ça, le flex column écrase les sections quand le contenu dépasse la
-   hauteur max au lieu de laisser le conteneur scroller. */
-.cg-box > * { flex-shrink: 0; }
-.cg-title { font-family: var(--font-display); font-weight: 600; color: var(--text); font-size: 1.3rem; letter-spacing: -0.01em; }
+   hauteur disponible au lieu de laisser le conteneur scroller. */
+.cg-scroll > * { flex-shrink: 0; }
+/* Pied figé : le bouton « Créer » reste toujours atteignable. */
+.cg-foot {
+  flex-shrink: 0;
+  padding: 1rem 1.75rem 1.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--modal-bg);
+}
+.cg-title { font-family: var(--font-display); font-weight: 600; color: var(--text); font-size: 1.4rem; letter-spacing: -0.02em; line-height: 1.05; }
 .cg-seg {
   display: flex; gap: 0.25rem;
   background: var(--surface); border-radius: 999px; padding: 0.25rem;
@@ -978,7 +1013,7 @@ html[data-theme='light'] .game-shell {
 .cg-toggle.on .cg-toggle-track { background: var(--text); border-color: var(--text); }
 .cg-toggle.on .cg-toggle-knob { transform: translateX(18px); background: var(--text-inverse); }
 .cg-toggle-text { font-size: 0.8rem; font-weight: 600; color: var(--text); display: flex; flex-direction: column; }
-.cg-create { margin-top: 0.5rem; width: 100%; }
+.cg-create { margin-top: 0; width: 100%; }
 
 /* ═══════════════ ÉCRAN DE FIN ═══════════════ */
 .end-screen {
