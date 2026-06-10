@@ -10,7 +10,8 @@ const { MODES, getMode, buildCustomMode } = require('../../../shared/modes');
 // reconnexions. Une partie = une "room" identifiée par un UUID stable. Les
 // modes en équipe passent par un salon (lobby) avant la partie.
 // ──────────────────────────────────────────────────────────────────────────
-const queue = [];                 // file du matchmaking classique (1v1)
+const queue = [];                 // file du matchmaking classé (1v1, comptes uniquement)
+const guestQueue = [];            // file invité (1v1 non classé, invités entre eux)
 const rooms = new Map();          // gameId -> room (partie en cours)
 const userActiveGame = new Map(); // userId -> gameId (partie live)
 const finishedGames = new Map();  // gameId -> { resultByUserId, timer }
@@ -73,14 +74,18 @@ function setupSocketHandlers(io) {
         socket.emit(EV.MATCH_FOUND, { gameId: existing.gameId });
         return;
       }
-      if (queue.find(q => q.userId === player.userId)) return;
+      // Invités : file séparée + mode non classé. Comptes : file classée entre
+      // eux uniquement, donc l'Elo est toujours attribué en fin de partie.
+      const q = player.guest ? guestQueue : queue;
+      const mode = player.guest ? MODES.casual : MODES.classic;
+      if (q.find(e => e.userId === player.userId)) return;
 
-      queue.push({ socketId: socket.id, userId: player.userId, pseudo: player.pseudo, elo: data?.elo || 1000 });
+      q.push({ socketId: socket.id, userId: player.userId, pseudo: player.pseudo, elo: data?.elo || 1000 });
       socket.emit(EV.QUEUE_STATUS, { waiting: true, online: onlineCount });
 
-      if (queue.length >= 2) {
-        const [a, b] = queue.splice(0, 2);
-        createGame(io, MODES.classic, [
+      if (q.length >= 2) {
+        const [a, b] = q.splice(0, 2);
+        createGame(io, mode, [
           { ...a, team: 0 },
           { ...b, team: 1 },
         ]);
@@ -88,8 +93,10 @@ function setupSocketHandlers(io) {
     });
 
     socket.on(EV.QUEUE_LEAVE, () => {
-      const idx = queue.findIndex(q => q.socketId === socket.id);
-      if (idx !== -1) queue.splice(idx, 1);
+      for (const q of [queue, guestQueue]) {
+        const idx = q.findIndex(e => e.socketId === socket.id);
+        if (idx !== -1) q.splice(idx, 1);
+      }
     });
 
     // ───────── Salons (modes en équipe) ─────────
@@ -216,8 +223,10 @@ function setupSocketHandlers(io) {
       broadcastOnlineCount(io);
       _eventCounters.delete(socket.id);
 
-      const qIdx = queue.findIndex(q => q.socketId === socket.id);
-      if (qIdx !== -1) queue.splice(qIdx, 1);
+      for (const q of [queue, guestQueue]) {
+        const qIdx = q.findIndex(e => e.socketId === socket.id);
+        if (qIdx !== -1) q.splice(qIdx, 1);
+      }
 
       const userId = socketToUser.get(socket.id);
       socketToUser.delete(socket.id);

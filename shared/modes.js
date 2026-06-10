@@ -175,6 +175,11 @@ const MODES = {
   },
 };
 
+// Duel 1v1 « libre » : identique au classique mais sans Elo ni persistance.
+// Sert au matchmaking invité (file séparée), pour ne jamais mêler invités et
+// comptes dans une partie classée.
+MODES.casual = { ...MODES.classic, id: 'casual', label: 'Duel libre', short: '1v1 libre', ranked: false };
+
 function getMode(id) {
   return MODES[id] || MODES.classic;
 }

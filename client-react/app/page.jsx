@@ -135,11 +135,17 @@ export default function HomePage() {
             <span className="mode-card-glow" aria-hidden />
             <div className="mode-card-head">
               <span className="mode-card-tag">1V1</span>
-              <span className="mode-badge mode-badge--ranked">★ Classé</span>
+              {user?.guest ? (
+                <span className="mode-badge mode-badge--public">Libre</span>
+              ) : (
+                <span className="mode-badge mode-badge--ranked">★ Classé</span>
+              )}
             </div>
             <div className="mode-card-name">Duel</div>
             <p className="mode-card-desc">
-              Tête-à-tête sonar. Chaque victoire compte au classement Elo.
+              {user?.guest
+                ? 'Tête-à-tête sonar. Partie libre — crée un compte pour jouer en classé.'
+                : 'Tête-à-tête sonar. Chaque victoire compte au classement Elo.'}
             </p>
             <span className="mode-card-cta">
               {user ? 'Jouer maintenant' : 'Jouer — compte ou invité'}
