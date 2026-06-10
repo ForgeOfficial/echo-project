@@ -142,6 +142,8 @@ class GameEngine {
       respawnAt: 0,   // mode Frags : timestamp de réapparition quand hp<=0
       // Effets de bonus actifs (timestamps de fin ; 0 = inactif).
       fx: { speedUntil: 0, burstUntil: 0, rapidUntil: 0, shieldUntil: 0 },
+      burstShots: 0,  // balles restantes de la salve en cours (bonus rafale)
+      nextBurstAt: 0,
     });
   }
 
@@ -186,36 +188,59 @@ class GameEngine {
     const p = this.players[playerIndex];
     if (!p || p.hp <= 0) return null; // un joueur mort ne peut plus tirer
     const now = Date.now();
-    // Bonus actifs : cadence (cooldown réduit) et rafale (3 projectiles en éventail).
+    // Bonus actifs : cadence (cooldown réduit) et rafale (tirs consécutifs).
     const rapid = now < p.fx.rapidUntil;
     const burst = now < p.fx.burstUntil;
     const cd = rapid ? PROJECTILE.COOLDOWN_MS * BONUS.TYPES.rapid.mult : PROJECTILE.COOLDOWN_MS;
     if (now - p.lastShotTime < cd) return null;
     const myProjectiles = this.projectiles.filter(pr => pr.playerIndex === playerIndex);
-    const maxActive = PROJECTILE.MAX_ACTIVE + (burst ? 3 : 0);
+    const maxActive = PROJECTILE.MAX_ACTIVE + (burst ? BONUS.TYPES.burst.shots : 0);
     if (myProjectiles.length >= maxActive) return null;
     p.lastShotTime = now;
+    // Rafale : une pression déclenche shots tirs successifs dans l'axe du
+    // joueur (les suivants partent automatiquement via _updateBurstFire).
+    if (burst) {
+      p.burstShots = BONUS.TYPES.burst.shots - 1;
+      p.nextBurstAt = now + BONUS.TYPES.burst.intervalMs;
+    }
+    return this._fireProjectile(playerIndex, now);
+  }
+
+  // Tire un projectile depuis la proue du joueur, dans son axe courant.
+  _fireProjectile(playerIndex, now) {
+    const p = this.players[playerIndex];
+    if (!p || p.hp <= 0) return null;
     this.stats[playerIndex].shots++;
-    const spread = burst ? [0, -0.22, 0.22] : [0];
-    // Les 3 balles partent du MÊME point (le bout du canon, dans l'axe du joueur)
-    // et ne diffèrent que par leur direction → éventail propre depuis la proue.
     const muzzleX = p.x + Math.cos(p.angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
     const muzzleY = p.y + Math.sin(p.angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
-    let first = null;
-    for (const da of spread) {
-      const ang = p.angle + da;
-      const proj = {
-        id: this._projIdSeq++,
-        x: muzzleX,
-        y: muzzleY,
-        vx: Math.cos(ang) * PROJECTILE.SPEED,
-        vy: Math.sin(ang) * PROJECTILE.SPEED,
-        playerIndex,
-      };
-      this.projectiles.push(proj);
-      if (!first) first = proj;
+    const proj = {
+      id: this._projIdSeq++,
+      x: muzzleX,
+      y: muzzleY,
+      vx: Math.cos(p.angle) * PROJECTILE.SPEED,
+      vy: Math.sin(p.angle) * PROJECTILE.SPEED,
+      playerIndex,
+    };
+    // Bout portant : si la bouche du canon touche déjà un adversaire, l'impact
+    // est immédiat (sinon la balle naissait DANS la cible et la traversait).
+    if (this._projectileHit(proj, muzzleX, muzzleY, now)) return proj;
+    this.projectiles.push(proj);
+    return proj;
+  }
+
+  // Rafale : tire les balles restantes de la salve aux échéances prévues.
+  _updateBurstFire(now) {
+    for (let i = 0; i < this.players.length; i++) {
+      const p = this.players[i];
+      if (!p || !p.burstShots) continue;
+      if (p.hp <= 0) { p.burstShots = 0; continue; }
+      if (now >= p.nextBurstAt) {
+        p.burstShots--;
+        p.nextBurstAt = now + BONUS.TYPES.burst.intervalMs;
+        this._fireProjectile(i, now);
+        if (this.over) return;
+      }
     }
-    return first;
   }
 
   tick(dtMs) {
@@ -231,6 +256,8 @@ class GameEngine {
     if (this.deathmatch) this._updateRespawns(now);
     if (this.bonusEnabled && !this.suddenDeath) this._updateBonuses(now);
     this._updatePlayers(dt, now);
+    this._updateBurstFire(now);
+    if (this.over) return null; // une balle de rafale peut clore la partie
     this._updateProjectiles(dt, now);
     if (this.over) return null; // un ramassage (nuke) peut terminer la partie
     if (this.borderMapEnabled && !this.suddenDeath) {
@@ -306,25 +333,77 @@ class GameEngine {
         p.angle = Math.atan2(dy, dx);
       }
       const speed = PLAYER.SPEED * (now < p.fx.speedUntil ? BONUS.TYPES.speed.mult : 1);
-      const newX = p.x + dx * speed * dt;
-      const newY = p.y + dy * speed * dt;
-      const clampedX = Math.max(PLAYER.RADIUS, Math.min(A.WIDTH - PLAYER.RADIUS, newX));
-      const clampedY = Math.max(PLAYER.RADIUS, Math.min(A.HEIGHT - PLAYER.RADIUS, newY));
-      // collision murs + collision avec un autre joueur (pas de chevauchement)
-      if (!this._collidesWithWall(clampedX, p.y, PLAYER.RADIUS) && !this._collidesWithPlayer(i, clampedX, p.y)) p.x = clampedX;
-      if (!this._collidesWithWall(p.x, clampedY, PLAYER.RADIUS) && !this._collidesWithPlayer(i, p.x, clampedY)) p.y = clampedY;
+      // Résolution par poussée : on applique le déplacement puis on repousse le
+      // cercle hors des obstacles, au lieu de refuser tout mouvement qui
+      // chevauche — ça « collait » le joueur aux blocs et aux autres joueurs.
+      const r = this._resolveCollisions(p.x + dx * speed * dt, p.y + dy * speed * dt, i);
+      p.x = r.x;
+      p.y = r.y;
     });
   }
 
-  _collidesWithPlayer(selfIdx, x, y) {
-    const minDist = PLAYER.RADIUS * 2;
-    for (let i = 0; i < this.players.length; i++) {
-      if (i === selfIdx) continue;
-      const o = this.players[i];
-      if (!o || o.hp <= 0) continue;
-      if (Math.hypot(x - o.x, y - o.y) < minDist) return true;
+  // Repousse un cercle joueur hors des murs et des autres joueurs vivants.
+  // Itéré pour gérer les coins et les poussées en chaîne (mur ↔ joueur).
+  _resolveCollisions(x, y, selfIdx) {
+    const A = this.arena, R = PLAYER.RADIUS;
+    const minDist = R * 2;
+    for (let iter = 0; iter < 4; iter++) {
+      x = Math.max(R, Math.min(A.WIDTH - R, x));
+      y = Math.max(R, Math.min(A.HEIGHT - R, y));
+      let moved = false;
+      for (let j = 0; j < this.players.length; j++) {
+        if (j === selfIdx) continue;
+        const o = this.players[j];
+        if (!o || o.hp <= 0) continue;
+        const dx = x - o.x, dy = y - o.y;
+        const d = Math.hypot(dx, dy);
+        if (d >= minDist) continue;
+        if (d > 0.0001) { x = o.x + (dx / d) * minDist; y = o.y + (dy / d) * minDist; }
+        else { x = o.x + minDist; } // superposition parfaite : poussée arbitraire
+        moved = true;
+      }
+      const w = this._pushOutOfWalls(x, y, R);
+      if (w) { x = w.x; y = w.y; moved = true; }
+      if (!moved) break;
     }
-    return false;
+    return { x, y };
+  }
+
+  // Pousse le point (x,y) hors des blocs visibles qu'il chevauche, le long de
+  // la normale au point le plus proche → glissement naturel le long des murs.
+  _pushOutOfWalls(x, y, radius) {
+    const S = this.arena.CELL_SIZE;
+    let moved = false;
+    const minC = Math.floor((x - radius) / S), maxC = Math.floor((x + radius) / S);
+    const minR = Math.floor((y - radius) / S), maxR = Math.floor((y + radius) / S);
+    for (let r = minR; r <= maxR; r++) {
+      for (let c = minC; c <= maxC; c++) {
+        if (!this._wallSet.has(`${c},${r}`)) continue;
+        const x0 = c * S + WALL.PAD, x1 = c * S + S - WALL.PAD;
+        const y0 = r * S + WALL.PAD, y1 = r * S + S - WALL.PAD;
+        const nearX = Math.max(x0, Math.min(x1, x));
+        const nearY = Math.max(y0, Math.min(y1, y));
+        const dx = x - nearX, dy = y - nearY;
+        const d = Math.hypot(dx, dy);
+        if (d >= radius) continue;
+        if (d > 0.0001) {
+          x = nearX + (dx / d) * radius;
+          y = nearY + (dy / d) * radius;
+        } else {
+          // Centre à l'intérieur du bloc : sortie par la face la plus proche.
+          const exits = [
+            { p: x - x0, ax: 'x', v: x0 - radius },
+            { p: x1 - x, ax: 'x', v: x1 + radius },
+            { p: y - y0, ax: 'y', v: y0 - radius },
+            { p: y1 - y, ax: 'y', v: y1 + radius },
+          ];
+          const e = exits.reduce((a, b) => (b.p < a.p ? b : a));
+          if (e.ax === 'x') x = e.v; else y = e.v;
+        }
+        moved = true;
+      }
+    }
+    return moved ? { x, y } : null;
   }
 
   _collidesWithWall(x, y, radius) {
@@ -353,43 +432,54 @@ class GameEngine {
     const A = this.arena;
     const toRemove = new Set();
     for (const proj of this.projectiles) {
-      proj.x += proj.vx * dt;
-      proj.y += proj.vy * dt;
-      if (proj.x < 0 || proj.x > A.WIDTH || proj.y < 0 || proj.y > A.HEIGHT) {
-        toRemove.add(proj.id);
-        continue;
-      }
-      if (this._collidesWithWall(proj.x, proj.y, PROJECTILE.RADIUS)) {
-        toRemove.add(proj.id);
-        continue;
-      }
-      const shooterTeam = this.players[proj.playerIndex]?.team;
-      // Cible : n'importe quel joueur d'une autre équipe (sauf friendly fire).
-      for (let ti = 0; ti < this.players.length; ti++) {
-        if (ti === proj.playerIndex) continue;
-        const target = this.players[ti];
-        if (!target || target.hp <= 0) continue;
-        if (!this.friendlyFire && target.team === shooterTeam) continue;
-        if (now <= target.invincibleUntil) continue;
-        const dist = Math.hypot(proj.x - target.x, proj.y - target.y);
-        if (dist < PLAYER.RADIUS + PROJECTILE.RADIUS) {
-          target.hp--;
-          target.invincibleUntil = now + PLAYER.INVINCIBILITY_MS;
-          this.stats[proj.playerIndex].hits++;
-          this._events.push({ type: 'hit', victim: ti, by: proj.playerIndex, x: proj.x, y: proj.y });
+      // Balayage en sous-pas : la balle avance par tronçons ≤ son rayon, testés
+      // un à un — elle ne peut plus « sauter » une cible collée ou un mur fin
+      // entre deux ticks (cause des tirs à bout portant qui ne touchaient pas).
+      const stepLen = Math.hypot(proj.vx, proj.vy) * dt;
+      const steps = Math.max(1, Math.ceil(stepLen / PROJECTILE.RADIUS));
+      for (let s = 1; s <= steps; s++) {
+        const x = proj.x + (proj.vx * dt * s) / steps;
+        const y = proj.y + (proj.vy * dt * s) / steps;
+        if (x < 0 || x > A.WIDTH || y < 0 || y > A.HEIGHT
+          || this._collidesWithWall(x, y, PROJECTILE.RADIUS)
+          || this._projectileHit(proj, x, y, now)) {
           toRemove.add(proj.id);
-          // Fin de partie : mort subite (1er coup) ou une seule équipe survivante.
-          if (this.suddenDeath) {
-            this._setOver(shooterTeam);
-          } else if (target.hp <= 0) {
-            this._onKill(proj.playerIndex, ti, now);
-            if (this.over) return;
-          }
-          break; // un projectile ne touche qu'une cible
+          break;
         }
+        proj.x = x;
+        proj.y = y;
       }
+      if (this.over) return;
     }
     this.projectiles = this.projectiles.filter(p => !toRemove.has(p.id));
+  }
+
+  // Teste l'impact d'un projectile au point (x,y) : n'importe quel joueur d'une
+  // autre équipe (sauf friendly fire). Applique dégâts/events ; true si touché.
+  _projectileHit(proj, x, y, now) {
+    const shooterTeam = this.players[proj.playerIndex]?.team;
+    for (let ti = 0; ti < this.players.length; ti++) {
+      if (ti === proj.playerIndex) continue;
+      const target = this.players[ti];
+      if (!target || target.hp <= 0) continue;
+      if (!this.friendlyFire && target.team === shooterTeam) continue;
+      if (now <= target.invincibleUntil) continue;
+      const dist = Math.hypot(x - target.x, y - target.y);
+      if (dist < PLAYER.RADIUS + PROJECTILE.RADIUS) {
+        target.hp--;
+        target.invincibleUntil = now + PLAYER.INVINCIBILITY_MS;
+        this.stats[proj.playerIndex].hits++;
+        this._events.push({ type: 'hit', victim: ti, by: proj.playerIndex, x, y });
+        // Fin de partie : mort subite (1er coup) ou une seule équipe survivante.
+        if (this.suddenDeath) {
+          this._setOver(shooterTeam);
+        } else if (target.hp <= 0) {
+          this._onKill(proj.playerIndex, ti, now);
+        }
+        return true; // un projectile ne touche qu'une cible
+      }
+    }
+    return false;
   }
 
   // Une élimination vient d'avoir lieu (victime à 0 PV). En mode Frags : on
@@ -437,6 +527,8 @@ class GameEngine {
     p.gasAccum = 0;
     p.exposed = false;
     p.fx = { speedUntil: 0, burstUntil: 0, rapidUntil: 0, shieldUntil: 0 }; // les effets ne survivent pas à la mort
+    p.burstShots = 0;
+    p.nextBurstAt = 0;
     p.invincibleUntil = now + Math.max(PLAYER.INVINCIBILITY_MS, 1500); // grâce d'apparition
     p.angle = Math.atan2(this.arena.HEIGHT / 2 - p.y, this.arena.WIDTH / 2 - p.x);
     this._events.push({ type: 'respawn', playerIndex: idx });

@@ -37,6 +37,7 @@ export class GameRenderer {
     this._hitReveals = [];   // marqueurs « tu as touché ici » (cibles hors-vue)
     this._nukeFx = null;     // flash plein écran d'une nuke
     this._localShots = [];   // tirs prédits localement (sortent du canon sans attendre le serveur)
+    this._pendingShots = []; // échéances (performance.now) des balles de rafale à venir
     this._lastWalls = null;
 
     // Interpolation : on bufferise les snapshots serveur et on rend avec un
@@ -221,14 +222,11 @@ export class GameRenderer {
 
     // Bonus vitesse : même multiplicateur que le serveur pour rester synchro.
     const speed = PLAYER.SPEED * (me.fx?.speed ? BONUS.TYPES.speed.mult : 1);
-    let nx = this._pred.x + dx * speed * dt;
-    let ny = this._pred.y + dy * speed * dt;
-    nx = Math.max(PLAYER.RADIUS, Math.min(this.arena.WIDTH - PLAYER.RADIUS, nx));
-    ny = Math.max(PLAYER.RADIUS, Math.min(this.arena.HEIGHT - PLAYER.RADIUS, ny));
-    // Collision axe par axe, exactement comme le serveur (murs désactivés en mort subite).
-    const useWalls = !latest.suddenDeath;
-    if (!(useWalls && this._predWall(nx, this._pred.y)) && !this._predPlayer(latest, nx, this._pred.y)) this._pred.x = nx;
-    if (!(useWalls && this._predWall(this._pred.x, ny)) && !this._predPlayer(latest, this._pred.x, ny)) this._pred.y = ny;
+    // Résolution par poussée, exactement comme le serveur (murs désactivés en
+    // mort subite) : on déplace puis on repousse hors des obstacles.
+    const r = this._predResolve(latest, this._pred.x + dx * speed * dt, this._pred.y + dy * speed * dt);
+    this._pred.x = r.x;
+    this._pred.y = r.y;
 
     // Réconciliation : zone morte = l'avance de prédiction normale due à la
     // latence (on ne la corrige pas → pas de rubber-band). Au-delà = vrai
@@ -243,37 +241,72 @@ export class GameRenderer {
     }
   }
 
-  _predWall(x, y) {
-    const set = this._wallSetPred;
-    if (!set || set.size === 0) return false;
-    const S = this.arena.CELL_SIZE, R = PLAYER.RADIUS;
-    const minC = Math.floor((x - R) / S), maxC = Math.floor((x + R) / S);
-    const minR = Math.floor((y - R) / S), maxR = Math.floor((y + R) / S);
-    for (let r = minR; r <= maxR; r++) {
-      for (let c = minC; c <= maxC; c++) {
-        if (set.has(`${c},${r}`)) {
-          // Même boîte que le serveur : bloc visible (retrait WALL.PAD), pas la cellule.
-          const x0 = c * S + WALL.PAD, x1 = c * S + S - WALL.PAD;
-          const y0 = r * S + WALL.PAD, y1 = r * S + S - WALL.PAD;
-          const nearX = Math.max(x0, Math.min(x1, x));
-          const nearY = Math.max(y0, Math.min(y1, y));
-          if (Math.hypot(x - nearX, y - nearY) < R) return true;
-        }
+  // Miroir de GameEngine._resolveCollisions : repousse le cercle prédit hors
+  // des murs et des autres joueurs (itéré pour les coins / poussées en chaîne).
+  _predResolve(latest, x, y) {
+    const A = this.arena, R = PLAYER.RADIUS;
+    const useWalls = !latest.suddenDeath;
+    const players = latest.players || [];
+    const minDist = R * 2;
+    for (let iter = 0; iter < 4; iter++) {
+      x = Math.max(R, Math.min(A.WIDTH - R, x));
+      y = Math.max(R, Math.min(A.HEIGHT - R, y));
+      let moved = false;
+      for (let i = 0; i < players.length; i++) {
+        if (i === this.myPlayerIndex) continue;
+        const o = players[i];
+        if (!o || o.x == null || o.hp <= 0) continue; // ennemi culé (hors-vue) : pas de collision prédite
+        const dx = x - o.x, dy = y - o.y;
+        const d = Math.hypot(dx, dy);
+        if (d >= minDist) continue;
+        if (d > 0.0001) { x = o.x + (dx / d) * minDist; y = o.y + (dy / d) * minDist; }
+        else { x = o.x + minDist; }
+        moved = true;
       }
+      if (useWalls) {
+        const w = this._predPushOutOfWalls(x, y, R);
+        if (w) { x = w.x; y = w.y; moved = true; }
+      }
+      if (!moved) break;
     }
-    return false;
+    return { x, y };
   }
 
-  _predPlayer(latest, x, y) {
-    const players = latest.players || [];
-    const min = PLAYER.RADIUS * 2;
-    for (let i = 0; i < players.length; i++) {
-      if (i === this.myPlayerIndex) continue;
-      const o = players[i];
-      if (!o || o.x == null || o.hp <= 0) continue; // ennemi culé (hors-vue) : pas de collision prédite
-      if (Math.hypot(x - o.x, y - o.y) < min) return true;
+  // Miroir de GameEngine._pushOutOfWalls (mêmes boîtes : bloc visible, retrait WALL.PAD).
+  _predPushOutOfWalls(x, y, radius) {
+    const set = this._wallSetPred;
+    if (!set || set.size === 0) return null;
+    const S = this.arena.CELL_SIZE;
+    let moved = false;
+    const minC = Math.floor((x - radius) / S), maxC = Math.floor((x + radius) / S);
+    const minR = Math.floor((y - radius) / S), maxR = Math.floor((y + radius) / S);
+    for (let r = minR; r <= maxR; r++) {
+      for (let c = minC; c <= maxC; c++) {
+        if (!set.has(`${c},${r}`)) continue;
+        const x0 = c * S + WALL.PAD, x1 = c * S + S - WALL.PAD;
+        const y0 = r * S + WALL.PAD, y1 = r * S + S - WALL.PAD;
+        const nearX = Math.max(x0, Math.min(x1, x));
+        const nearY = Math.max(y0, Math.min(y1, y));
+        const dx = x - nearX, dy = y - nearY;
+        const d = Math.hypot(dx, dy);
+        if (d >= radius) continue;
+        if (d > 0.0001) {
+          x = nearX + (dx / d) * radius;
+          y = nearY + (dy / d) * radius;
+        } else {
+          const exits = [
+            { p: x - x0, ax: 'x', v: x0 - radius },
+            { p: x1 - x, ax: 'x', v: x1 + radius },
+            { p: y - y0, ax: 'y', v: y0 - radius },
+            { p: y1 - y, ax: 'y', v: y1 + radius },
+          ];
+          const e = exits.reduce((a, b) => (b.p < a.p ? b : a));
+          if (e.ax === 'x') x = e.v; else y = e.v;
+        }
+        moved = true;
+      }
     }
-    return false;
+    return moved ? { x, y } : null;
   }
 
   // Reconstruit un état positionnel interpolé à (now - délai).
@@ -367,24 +400,42 @@ export class GameRenderer {
 
   triggerNuke(x, y) { this._nukeFx = { x, y, start: Date.now() }; }
 
-  // Tir prédit localement : la (ou les, en rafale) balle part immédiatement du
-  // bout du canon PRÉDIT (donc aligné sur le vaisseau affiché), sans attendre
-  // l'aller-retour serveur. Elle simule TOUT son trajet côté client ; en
-  // contrepartie on n'affiche PAS le projectile serveur de mes propres tirs
+  // Tir prédit localement : la balle part immédiatement du bout du canon
+  // PRÉDIT (donc aligné sur le vaisseau affiché), sans attendre l'aller-retour
+  // serveur. Elle simule TOUT son trajet côté client ; en contrepartie on
+  // n'affiche PAS le projectile serveur de mes propres tirs
   // (cf. _drawProjectiles) → une seule balle, pas de doublon. Les dégâts
-  // restent gérés par le serveur.
+  // restent gérés par le serveur. Rafale : les balles suivantes de la salve
+  // sont programmées au même rythme que le serveur (cf. _fireDueBurstShots).
   predictShot() {
     if (!this._pred) return;
     const me = this._buffer[this._buffer.length - 1]?.state?.players?.[this.myPlayerIndex];
     if (!me || me.hp <= 0) return;
-    const burst = !!me.fx?.burst;
-    const angle = this._pred.angle || 0;
+    this._spawnLocalShot();
+    if (me.fx?.burst) {
+      const B = BONUS.TYPES.burst;
+      for (let k = 1; k < B.shots; k++) {
+        this._pendingShots.push(performance.now() + k * B.intervalMs);
+      }
+    }
+  }
+
+  _spawnLocalShot() {
+    const angle = this._pred?.angle || 0;
     const mx = this._pred.x + Math.cos(angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
     const my = this._pred.y + Math.sin(angle) * (PLAYER.RADIUS + PROJECTILE.RADIUS + 2);
-    const spread = burst ? [0, -0.22, 0.22] : [0];
-    for (const da of spread) {
-      const a = angle + da;
-      this._localShots.push({ x: mx, y: my, vx: Math.cos(a) * PROJECTILE.SPEED, vy: Math.sin(a) * PROJECTILE.SPEED, born: performance.now() });
+    this._localShots.push({ x: mx, y: my, vx: Math.cos(angle) * PROJECTILE.SPEED, vy: Math.sin(angle) * PROJECTILE.SPEED, born: performance.now() });
+  }
+
+  // Tire les balles de rafale arrivées à échéance, dans l'axe prédit COURANT
+  // (le serveur fait pareil avec p.angle au moment du tir).
+  _fireDueBurstShots() {
+    if (!this._pendingShots.length) return;
+    if (!this._pred) { this._pendingShots = []; return; }
+    const now = performance.now();
+    while (this._pendingShots.length && now >= this._pendingShots[0]) {
+      this._pendingShots.shift();
+      this._spawnLocalShot();
     }
   }
 
@@ -480,6 +531,7 @@ export class GameRenderer {
       this._hitFlash[i] = Math.max(0, (this._hitFlash[i] || 0) - dt);
     }
     this._stepPrediction(dt);
+    this._fireDueBurstShots();
     this._advanceLocalShots(dt);
     this._draw();
     this._rafId = requestAnimationFrame(ts2 => this._loop(ts2));

@@ -48,7 +48,7 @@ const BONUS = {
   SPAWN_INTERVAL_MS: 14000, // cadence de base (modulée par la fréquence du mode)
   MAX_ON_MAP: 3,
   TYPES: {
-    burst:  { label: 'Rafale',   icon: '⚡', color: '255,210,0',   kind: 'timed',   dur: 8000 },
+    burst:  { label: 'Rafale',   icon: '⚡', color: '255,210,0',   kind: 'timed',   dur: 8000, shots: 3, intervalMs: 90 },
     life:   { label: 'Vie +1',   icon: '✚', color: '255,70,90',    kind: 'instant' },
     speed:  { label: 'Vitesse',  icon: '»',  color: '0,230,255',   kind: 'timed',   dur: 6000, mult: 1.4 },
     shield: { label: 'Bouclier', icon: '◈',  color: '120,200,255', kind: 'timed',   dur: 4000 },
