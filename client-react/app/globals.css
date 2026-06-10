@@ -25,6 +25,8 @@
   --nav-bg: rgba(6, 6, 7, 0.65);
   --modal-bg: rgba(14, 14, 16, 0.92);
   --overlay-bg: rgba(2, 2, 3, 0.7);
+  /* fonds des panneaux flottants du jeu (HUD, chips, boutons tactiles) */
+  --panel-rgb: 9, 9, 11;
 
   --warn: #FF453A;
   --green: #30D158;
@@ -65,6 +67,7 @@ html[data-theme='light'] {
   --nav-bg: rgba(246, 246, 247, 0.72);
   --modal-bg: rgba(252, 252, 253, 0.94);
   --overlay-bg: rgba(20, 20, 23, 0.35);
+  --panel-rgb: 251, 251, 252;
 
   --warn: #D70015;
   --green: #1D8F45;
@@ -86,6 +89,20 @@ html[data-theme='light'] .lobby-card {
 html[data-theme='light'] .mode-card:hover { box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1); }
 html[data-theme='light'] .mode-card--featured:hover { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.12); }
 html[data-theme='light'] .btn:hover:not(:disabled) { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16); }
+
+/* Scène de jeu en clair : ombre du canvas allégée, joystick encre. */
+html[data-theme='light'] .game-canvas {
+  box-shadow: 0 0 0 1px rgba(var(--ink), 0.12), 0 30px 80px rgba(0, 0, 0, 0.18);
+}
+html[data-theme='light'] .tc-stick-knob {
+  background: radial-gradient(circle at 38% 32%, #3C3C44 0%, #232329 45%, #0C0C0F 100%);
+  border-color: rgba(0, 0, 0, 0.85);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.3),
+    0 0 24px rgba(0, 0, 0, 0.12),
+    inset 0 -4px 10px rgba(0, 0, 0, 0.35);
+}
+html[data-theme='light'] .lobby-meta-tag.toxic { color: #65880F; border-color: rgba(101, 136, 15, 0.5); }
 
 /* Couleurs de rang (argent, or, diamant…) : appliquées en styles inline et
    pensées pour fond noir — on les densifie au rendu pour rester lisible. */
@@ -366,25 +383,14 @@ body::after {
 .match-date { color: var(--text-dim); font-size: 0.74rem; font-variant-numeric: tabular-nums; }
 
 /* ═══════════════ SCÈNE DE JEU ═══════════════ */
-/* L'arène se joue dans le noir quel que soit le thème : on re-fixe les
-   jetons sombres pour toute la scène (HUD, overlays, contrôles tactiles). */
 .game-shell {
-  --ink: 255, 255, 255;
-  --text: #F4F4F5;
-  --text-dim: #85858E;
-  --text-strong: #FFFFFF;
-  --text-inverse: #060607;
-  --warn: #FF453A;
-  --green: #30D158;
-  --gold: #FFD60A;
-  --surface: rgba(var(--ink), 0.035);
-  --surface-2: rgba(var(--ink), 0.07);
-  --border: rgba(var(--ink), 0.08);
-  --border-bright: rgba(var(--ink), 0.2);
   position: fixed; inset: 64px 0 0 0;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
   background: radial-gradient(ellipse at center, #0B0B0D 0%, #050506 70%, #030304 100%);
+}
+html[data-theme='light'] .game-shell {
+  background: radial-gradient(ellipse at center, #FFFFFF 0%, #F0F0F2 70%, #E8E8EB 100%);
 }
 .game-scaler { transform-origin: center center; }
 .game-stage {
@@ -438,7 +444,7 @@ body::after {
 .respawn-overlay {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 0.2rem;
-  background: rgba(4, 4, 5, 0.6);
+  background: rgba(var(--panel-rgb), 0.6);
   backdrop-filter: blur(2px);
   pointer-events: none; text-align: center;
   border-radius: 0 0 var(--r-md) var(--r-md);
@@ -449,7 +455,7 @@ body::after {
 }
 .respawn-count {
   font-family: var(--font-display); font-weight: 700;
-  font-size: clamp(3rem, 9vw, 5.5rem); line-height: 1; color: #fff;
+  font-size: clamp(3rem, 9vw, 5.5rem); line-height: 1; color: var(--text-strong);
   font-variant-numeric: tabular-nums;
   animation: respawn-pop 1s var(--ease-out) infinite;
 }
@@ -468,7 +474,7 @@ body::after {
   position: absolute; top: 14px; left: 50%;
   display: flex; align-items: center; gap: 0.7rem;
   padding: 0.5rem 1.1rem 0.5rem 0.85rem;
-  background: rgba(8, 8, 10, 0.85);
+  background: rgba(var(--panel-rgb), 0.85);
   border: 1px solid color-mix(in srgb, var(--bc) 60%, transparent);
   border-radius: 999px;
   backdrop-filter: blur(10px);
@@ -493,7 +499,7 @@ body::after {
 .bonus-announce-txt { display: flex; flex-direction: column; line-height: 1.15; }
 .bonus-announce-txt b {
   font-family: var(--font-display); font-weight: 600; font-size: 0.85rem;
-  color: #fff;
+  color: var(--text-strong);
 }
 .bonus-announce-txt small {
   font-size: 0.62rem; letter-spacing: 0.1em;
@@ -505,7 +511,7 @@ body::after {
 .fx-chip {
   display: flex; align-items: center; gap: 0.35rem;
   padding: 0.25rem 0.6rem; border: 1px solid; border-radius: 999px;
-  background: rgba(8, 8, 10, 0.8);
+  background: rgba(var(--panel-rgb), 0.8);
   backdrop-filter: blur(8px);
   font-weight: 700;
   animation: fx-chip-in 0.3s var(--ease-spring) both;
@@ -518,7 +524,7 @@ body::after {
 .game-hud {
   width: 800px; display: flex; justify-content: space-between;
   align-items: center; padding: 0.6rem 1.1rem;
-  background: rgba(10, 10, 12, 0.92);
+  background: rgba(var(--panel-rgb), 0.92);
   border: 1px solid var(--border); border-bottom: none;
   border-radius: var(--r-md) var(--r-md) 0 0;
   backdrop-filter: blur(12px);
@@ -1189,7 +1195,7 @@ body::after {
   align-items: center; justify-content: center;
   gap: 4px;
   border-radius: 50%;
-  background: rgba(8, 8, 10, 0.55);
+  background: rgba(var(--panel-rgb), 0.55);
   backdrop-filter: blur(10px);
   font-family: var(--font-display);
   letter-spacing: 0.1em;
@@ -1203,7 +1209,7 @@ body::after {
 .tc-btn--fire {
   width: 116px; height: 116px;
   border: 2px solid rgba(var(--ink), 0.9);
-  color: #fff;
+  color: var(--text);
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.55), 0 0 28px rgba(var(--ink), 0.15),
               inset 0 0 24px rgba(var(--ink), 0.08);
   margin-bottom: 6px;          /* le bouton principal, légèrement plus bas */
@@ -1223,7 +1229,7 @@ body::after {
   width: 0; height: 0;
   border-style: solid;
   border-width: 11px 0 11px 18px;
-  border-color: transparent transparent transparent #ffffff;
+  border-color: transparent transparent transparent currentColor;
   filter: drop-shadow(0 0 6px rgba(var(--ink), 0.6));
 }
 .tc-icon-echo {
@@ -1245,7 +1251,7 @@ body::after {
   position: absolute; inset: 0;
   border-radius: 50%;
   pointer-events: none;
-  background: conic-gradient(rgba(2, 2, 4, 0.7) var(--tc-ang), transparent 0);
+  background: conic-gradient(rgba(var(--panel-rgb), 0.75) var(--tc-ang), transparent 0);
   animation-name: tc-sweep;
   animation-timing-function: linear;
   animation-fill-mode: forwards;

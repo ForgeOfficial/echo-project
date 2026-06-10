@@ -1,4 +1,5 @@
 import { ARENA, PLAYER, SONAR, PROJECTILE, WALL, BONUS } from './constants';
+import { ARENA_THEMES, themedAccent, currentTheme } from './theme';
 
 const DEFAULT_TEAM_COLORS = ['255,255,255', '255,69,58']; // équipe 0 blanche, 1 rouge
 
@@ -57,6 +58,10 @@ export class GameRenderer {
     this._confetti = [];
     this._lastCelebTs = 0;
 
+    // Palette d'arène selon le thème (sombre = abysse, clair = brume).
+    this._themeName = currentTheme();
+    this.T = ARENA_THEMES[this._themeName];
+
     // Calques offscreen réutilisés (l'environnement passe par le fog, le reste est net)
     this._scene = this._makeLayer();
     this._mask = this._makeLayer();
@@ -64,7 +69,21 @@ export class GameRenderer {
   }
 
   _teamColor(team) {
-    return this.teamColors[team] || this.teamColors[0] || DEFAULT_TEAM_COLORS[0];
+    const c = this.teamColors[team] || this.teamColors[0] || DEFAULT_TEAM_COLORS[0];
+    // En clair, les teintes pensées pour fond noir (blanc, jaune…) sont densifiées.
+    return themedAccent(c, this._themeName);
+  }
+
+  // Suit l'attribut data-theme de <html>. Au changement : nouvelle palette et
+  // purge des rendus pré-calculés (fond, murs, sprites de balles).
+  _syncTheme() {
+    const name = currentTheme();
+    if (name === this._themeName) return;
+    this._themeName = name;
+    this.T = ARENA_THEMES[name];
+    this._bg = null;
+    this._wallSpriteC = null;
+    this._spriteCache.clear();
   }
 
   // Coéquipiers vivants (moi inclus) : sources de vision partagée. On exige une
@@ -113,11 +132,11 @@ export class GameRenderer {
     const ctx = layer.ctx;
     const W = this.arena.WIDTH, H = this.arena.HEIGHT, S = this.arena.CELL_SIZE;
     const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
-    bg.addColorStop(0, '#101013');
-    bg.addColorStop(1, '#050506');
+    bg.addColorStop(0, this.T.bg0);
+    bg.addColorStop(1, this.T.bg1);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.strokeStyle = this.T.grid;
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = S; x < W; x += S) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
@@ -139,8 +158,8 @@ export class GameRenderer {
     const x = c.getContext('2d');
     x.scale(dpr, dpr);
     const g = x.createRadialGradient(glowR, glowR, 0, glowR, glowR, glowR);
-    g.addColorStop(0, '#ffffff');
-    g.addColorStop(coreR / glowR, '#ffffff');
+    g.addColorStop(0, this.T.core);
+    g.addColorStop(coreR / glowR, this.T.core);
     g.addColorStop(Math.min(1, coreR / glowR + 0.12), `rgba(${color},0.85)`);
     g.addColorStop(1, `rgba(${color},0)`);
     x.fillStyle = g;
@@ -163,12 +182,12 @@ export class GameRenderer {
     const x = c.getContext('2d');
     x.scale(dpr, dpr);
     const g = x.createLinearGradient(0, 0, 0, sz);
-    g.addColorStop(0, '#28282E');
-    g.addColorStop(1, '#161619');
+    g.addColorStop(0, this.T.wall0);
+    g.addColorStop(1, this.T.wall1);
     x.fillStyle = g;
     this._roundRect(x, 0, 0, sz, sz, 6);
     x.fill();
-    x.strokeStyle = 'rgba(255,255,255,0.18)';
+    x.strokeStyle = this.T.wallStroke;
     x.lineWidth = 1;
     this._roundRect(x, 0.5, 0.5, sz - 1, sz - 1, 6);
     x.stroke();
@@ -601,6 +620,7 @@ export class GameRenderer {
   _draw() {
     const ctx = this.ctx;
     const now = Date.now();
+    this._syncTheme();
     if (this._celebration) { this._drawCelebration(ctx, now); return; }
 
     const s = this._sampleState();
@@ -631,7 +651,7 @@ export class GameRenderer {
     // de la lumière devient vraiment sombre → sensation d'être « dans l'ombre ».
     const fctx = this._fog.ctx;
     fctx.clearRect(0, 0, W, H);
-    fctx.fillStyle = 'rgba(2,2,4,0.9)';
+    fctx.fillStyle = this.T.fog;
     fctx.fillRect(0, 0, W, H);
     fctx.save();
     fctx.globalCompositeOperation = 'destination-out';
@@ -675,8 +695,8 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 400);
     const bg = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, W * 0.75);
-    bg.addColorStop(0, '#170709');
-    bg.addColorStop(1, '#080304');
+    bg.addColorStop(0, this.T.sd0);
+    bg.addColorStop(1, this.T.sd1);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
@@ -879,7 +899,7 @@ export class GameRenderer {
   // chevron flottante. Le vert jade reste distinct des couleurs d'équipe
   // (cyan/magenta) mais en version raffinée.
   _drawSelfMarker(ctx, me, now) {
-    const col = '120,255,180';                 // jade doux, lisible mais pas agressif
+    const col = this.T.self;                   // jade doux, lisible mais pas agressif
     const breathe = 1 + 0.05 * Math.sin(now / 600);
     const baseR = PLAYER.RADIUS + 13;
     ctx.save();
@@ -970,7 +990,7 @@ export class GameRenderer {
     ctx.restore();
 
     const core = ctx.createRadialGradient(0, -3, 1, 0, 0, PLAYER.RADIUS);
-    core.addColorStop(0, '#ffffff');
+    core.addColorStop(0, this.T.core);
     core.addColorStop(0.4, `rgba(${color},0.9)`);
     core.addColorStop(1, `rgba(${color},0.25)`);
     ctx.beginPath();
@@ -1032,7 +1052,7 @@ export class GameRenderer {
     for (const b of s.bonuses) {
       const def = BONUS.TYPES[b.type];
       if (!def) continue;
-      const col = def.color;
+      const col = themedAccent(def.color, this._themeName);
       const age = now - b.spawnAt;
       const remaining = BONUS.LIFETIME_MS - age;
       if (remaining < 3000 && Math.floor(now / 180) % 2 === 0) continue; // clignote avant disparition
@@ -1054,8 +1074,8 @@ export class GameRenderer {
       ctx.beginPath();
       ctx.moveTo(0, -r); ctx.lineTo(r, 0); ctx.lineTo(0, r); ctx.lineTo(-r, 0); ctx.closePath();
       ctx.fill();
-      ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
-      // icône
+      ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(${this.T.ink},0.85)`; ctx.stroke();
+      // icône (blanche : posée sur l'orbe colorée dense, lisible dans les deux thèmes)
       ctx.fillStyle = '#fff';
       ctx.font = '600 15px "Clash Display", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1084,12 +1104,13 @@ export class GameRenderer {
     const flash = Math.max(0, 1 - el / 260);
     if (flash > 0) { ctx.fillStyle = `rgba(225,255,190,${0.75 * flash})`; ctx.fillRect(0, 0, W, H); }
     const { x, y } = this._nukeFx;
+    const nk = themedAccent('163,230,53', this._themeName);
     ctx.save();
     ctx.beginPath(); ctx.arc(x, y, t * Math.hypot(W, H), 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(163,230,53,${(1 - t) * 0.3})`;
+    ctx.strokeStyle = `rgba(${nk},${(1 - t) * 0.3})`;
     ctx.lineWidth = (6 * (1 - t) + 1) + 12;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(163,230,53,${(1 - t) * 0.9})`;
+    ctx.strokeStyle = `rgba(${nk},${(1 - t) * 0.9})`;
     ctx.lineWidth = 6 * (1 - t) + 1;
     ctx.stroke();
     ctx.restore();
@@ -1119,7 +1140,7 @@ export class GameRenderer {
       const flash = Math.max(0, 1 - el / 180);
       if (flash > 0) {
         const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 24);
-        g.addColorStop(0, `rgba(255,255,255,${0.9 * flash})`);
+        g.addColorStop(0, `rgba(${this.T.ink},${0.9 * flash})`);
         g.addColorStop(0.5, `rgba(${color},${0.55 * flash})`);
         g.addColorStop(1, `rgba(${color},0)`);
         ctx.fillStyle = g;
@@ -1138,7 +1159,7 @@ export class GameRenderer {
 
       // Croix « hit-marker » en diagonale (style FPS) qui s'écarte légèrement
       const gap = 6 + ease * 7, len = 7;
-      ctx.strokeStyle = `rgba(255,255,255,${a})`;
+      ctx.strokeStyle = `rgba(${this.T.ink},${a})`;
       ctx.lineWidth = 2;
       for (let k = 0; k < 4; k++) {
         const ang = Math.PI / 4 + k * (Math.PI / 2);
@@ -1163,7 +1184,7 @@ export class GameRenderer {
     const bg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, W * 0.9);
     bg.addColorStop(0, `rgba(${color},${0.22 + 0.5 * flash})`);
     bg.addColorStop(0.5, `rgba(${color},${0.06 + 0.16 * flash})`);
-    bg.addColorStop(1, '#050506');
+    bg.addColorStop(1, this.T.bg1);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
@@ -1213,7 +1234,7 @@ export class GameRenderer {
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rot);
-      ctx.fillStyle = p.white ? '#fff' : `rgb(${p.color})`;
+      ctx.fillStyle = p.white ? this.T.confetti : `rgb(${p.color})`;
       ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 1.6);
       ctx.restore();
     });
@@ -1244,11 +1265,11 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 1600);
     ctx.save();
-    ctx.strokeStyle = `rgba(255,255,255,${0.08 + 0.04 * pulse})`;
+    ctx.strokeStyle = `rgba(${this.T.ink},${0.08 + 0.04 * pulse})`;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.strokeStyle = `rgba(${this.T.ink},0.4)`;
     ctx.lineWidth = 2;
     const L = 22, o = 2;
     const corners = [
@@ -1267,7 +1288,7 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.7);
     g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    g.addColorStop(1, `rgba(0,0,0,${this.T.vignette})`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
@@ -1278,7 +1299,7 @@ export class GameRenderer {
     const W = this.arena.WIDTH, H = this.arena.HEIGHT;
     const pulse = 0.5 + 0.5 * Math.sin(now / 350);
     ctx.save();
-    ctx.fillStyle = `rgba(163,230,53,${0.10 + 0.07 * pulse})`;
+    ctx.fillStyle = `rgba(${this.T.zoneFill},${0.10 + 0.07 * pulse})`;
     ctx.fillRect(0, 0, W, z.y);                              // haut
     ctx.fillRect(0, z.y + z.h, W, H - (z.y + z.h));          // bas
     ctx.fillRect(0, z.y, z.x, z.h);                          // gauche
@@ -1287,10 +1308,10 @@ export class GameRenderer {
     // Bord du sanctuaire : pointillés défilants, lumineux.
     ctx.setLineDash([14, 10]);
     ctx.lineDashOffset = -((now / 40) % 24);
-    ctx.strokeStyle = `rgba(190,242,100,${(0.6 + 0.3 * pulse) * 0.3})`;
+    ctx.strokeStyle = `rgba(${this.T.zoneEdge},${(0.6 + 0.3 * pulse) * 0.3})`;
     ctx.lineWidth = 9;
     ctx.strokeRect(z.x, z.y, z.w, z.h);
-    ctx.strokeStyle = `rgba(190,242,100,${0.6 + 0.3 * pulse})`;
+    ctx.strokeStyle = `rgba(${this.T.zoneEdge},${0.6 + 0.3 * pulse})`;
     ctx.lineWidth = 3;
     ctx.strokeRect(z.x, z.y, z.w, z.h);
     ctx.restore();
@@ -1306,8 +1327,8 @@ export class GameRenderer {
     const pulse = 0.5 + 0.5 * Math.sin(now / 170);
     ctx.save();
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.18, W / 2, H / 2, W * 0.72);
-    g.addColorStop(0, 'rgba(163,230,53,0)');
-    g.addColorStop(1, `rgba(163,230,53,${0.22 + 0.2 * pulse})`);
+    g.addColorStop(0, `rgba(${this.T.zoneFill},0)`);
+    g.addColorStop(1, `rgba(${this.T.zoneFill},${0.22 + 0.2 * pulse})`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
@@ -1318,7 +1339,7 @@ export class GameRenderer {
     ctx.lineWidth = 6;
     ctx.strokeRect(3, 3, W - 6, H - 6);
 
-    ctx.fillStyle = `rgba(212,255,120,${0.82 + 0.18 * pulse})`;
+    ctx.fillStyle = `rgba(${this.T.gasText},${0.82 + 0.18 * pulse})`;
     ctx.font = '600 24px "Clash Display", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

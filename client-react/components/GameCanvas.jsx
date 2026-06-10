@@ -5,6 +5,7 @@ import { GameRenderer } from '../lib/renderer';
 import { EV, ARENA, PLAYER, PROJECTILE, SONAR, BONUS } from '../lib/constants';
 import { arenaForPlayers } from '../lib/modes';
 import { audio } from '../lib/audio';
+import { themedAccent, useThemeName } from '../lib/theme';
 import TouchControls from './TouchControls';
 
 export default function GameCanvas({ matchData, initialState }) {
@@ -269,7 +270,10 @@ export default function GameCanvas({ matchData, initialState }) {
   const info = matchInfo || matchData;
   const mode = info?.mode;
   const roster = info?.players ?? [];
-  const teamColors = mode?.teamColors ?? ['255,255,255', '255,69,58'];
+  // Couleurs d'équipe du HUD : densifiées en thème clair (le blanc de l'équipe
+  // 1v1 serait invisible sur fond blanc). Le renderer fait pareil côté canvas.
+  const themeName = useThemeName();
+  const teamColors = (mode?.teamColors ?? ['255,255,255', '255,69,58']).map(c => themedAccent(c, themeName));
   const teamNames = mode?.teamNames ?? ['Blanc', 'Rouge'];
   const teamSize = mode?.teamSize ?? 1;
   const teamCount = mode?.teamCount ?? 2;
@@ -309,7 +313,7 @@ export default function GameCanvas({ matchData, initialState }) {
     return Array.from({ length: count }).map((_, i) => {
       const filled = i < hp;
       const over = i >= maxHp; // pastille de surcharge (bonus Vie+)
-      const c = over ? '#FFD700' : col;
+      const c = over ? 'var(--gold)' : col;
       return (
         <span key={i} className="hp-dot" style={filled
           ? { background: c, border: `1px solid ${c}`, boxShadow: `0 0 8px ${c}` }
@@ -403,7 +407,7 @@ export default function GameCanvas({ matchData, initialState }) {
 
           {/* Annonce « un bonus est apparu » (vue par tous) */}
           {bonusAnnounce && BONUS.TYPES[bonusAnnounce.type] && (
-            <div key={bonusAnnounce.key} className="bonus-announce" style={{ '--bc': `rgb(${BONUS.TYPES[bonusAnnounce.type].color})` }}>
+            <div key={bonusAnnounce.key} className="bonus-announce" style={{ '--bc': `rgb(${themedAccent(BONUS.TYPES[bonusAnnounce.type].color, themeName)})` }}>
               <span className="bonus-announce-icon">{BONUS.TYPES[bonusAnnounce.type].icon}</span>
               <span className="bonus-announce-txt">
                 <b>{BONUS.TYPES[bonusAnnounce.type].label}</b>
@@ -416,7 +420,7 @@ export default function GameCanvas({ matchData, initialState }) {
           {activeEffects.length > 0 && (
             <div className="fx-bar">
               {activeEffects.map(fx => (
-                <div key={fx.key} className="fx-chip" style={{ borderColor: `rgb(${fx.def.color})`, color: `rgb(${fx.def.color})` }}>
+                <div key={fx.key} className="fx-chip" style={{ borderColor: `rgb(${themedAccent(fx.def.color, themeName)})`, color: `rgb(${themedAccent(fx.def.color, themeName)})` }}>
                   <span className="fx-icon">{fx.def.icon}</span>
                   <span className="fx-sec">{Math.ceil(fx.ms / 1000)}s</span>
                 </div>

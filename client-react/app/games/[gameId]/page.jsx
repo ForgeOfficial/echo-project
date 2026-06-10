@@ -4,6 +4,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { useApp } from '../../../context/AppContext';
 import GameCanvas from '../../../components/GameCanvas';
 import { EV } from '../../../lib/constants';
+import { themedAccent, useThemeName } from '../../../lib/theme';
 
 const STAGE = { LOADING: 'loading', PLAYING: 'playing', END: 'end' };
 
@@ -18,6 +19,7 @@ export default function GamePage() {
   const router = useRouter();
   const { gameId } = useParams();
 
+  const themeName = useThemeName();
   const [stage, setStage] = useState(STAGE.LOADING);
   const [matchData, setMatchData] = useState(null);
   const [initialState, setInitialState] = useState(null);
@@ -78,7 +80,9 @@ export default function GamePage() {
     const players = endData.players ?? matchData?.players ?? [];
     const winners = wTeam >= 0 ? players.filter(p => p.team === wTeam).map(p => p.pseudo) : [];
     const winnerLabel = wTeam < 0 ? null : (teamSize > 1 ? `Équipe ${teamNames[wTeam]}` : winners[0]);
-    const winnerColor = wTeam >= 0 ? rgbToHex(teamColors[wTeam]) : '#FFD700';
+    const winnerColor = wTeam >= 0
+      ? rgbToHex(themedAccent(teamColors[wTeam], themeName))
+      : (themeName === 'light' ? '#A07400' : '#FFD700');
     return (
       <EndScreen
         result={result}

@@ -3,11 +3,13 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useApp } from '../../../context/AppContext';
 import { EV } from '../../../lib/constants';
+import { themedAccent, useThemeName } from '../../../lib/theme';
 
 export default function LobbyPage() {
   const { user, socket, socketReady, authReady } = useApp();
   const router = useRouter();
   const { code } = useParams();
+  const themeName = useThemeName();
 
   const [lobby, setLobby] = useState(null);
   const [error, setError] = useState('');
@@ -102,7 +104,7 @@ export default function LobbyPage() {
         {isFFA ? (
           <div className="lobby-ffa">
             {lobby.members.map(m => {
-              const col = `rgb(${mode.teamColors[m.team % mode.teamColors.length]})`;
+              const col = `rgb(${themedAccent(mode.teamColors[m.team % mode.teamColors.length], themeName)})`;
               return (
                 <div key={m.userId} className="lobby-slot filled" style={{ borderColor: col }}>
                   <span style={{ opacity: m.connected ? 1 : 0.4, color: col }}>{m.pseudo}</span>
@@ -118,7 +120,7 @@ export default function LobbyPage() {
         ) : (
           <div className="lobby-teams">
             {Array.from({ length: mode.teamCount }).map((_, t) => {
-              const col = `rgb(${mode.teamColors[t]})`;
+              const col = `rgb(${themedAccent(mode.teamColors[t], themeName)})`;
               const members = lobby.members.filter(m => m.team === t);
               const iAmHere = me?.team === t;
               const teamFull = members.length >= mode.teamSize;
